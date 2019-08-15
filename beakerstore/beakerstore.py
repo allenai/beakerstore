@@ -1,3 +1,4 @@
+import logging
 import urllib.request
 import json
 import os
@@ -5,9 +6,10 @@ import collections
 
 from typing import Optional, Tuple
 
-TEST_DOWNLOADS = 'test_downloads'
 from http.client import HTTPResponse
 from urllib.error import HTTPError
+
+TEST_DOWNLOADS = 'test_downloads'
 
 INTERNAL = 'internal'
 PUBLIC = 'public'
@@ -25,59 +27,56 @@ BEAKER_URLS = {
 #         self.success = success
 #         self.msg = msg
 
-Path = collections.namedtuple('Path', ['dataset', 'file', 'public'], defaults=(True,))
-DatasetDetails = collections.namedtuple('DatasetDetails', ['path', 'details'])
+# CachePath = collections.namedtuple('CachePath', ['cache_loc', 'directory', 'file', 'is_dir'])
+BeakerPath = collections.namedtuple('BeakerPath', ['dataset', 'file', 'is_dir', 'public'],
+                                    defaults=(True,))
+
+DatasetDetails = collections.namedtuple('DatasetDetails', ['beaker_path', 'cache_path', 'info'])
 Result = collections.namedtuple('Result', ['success', 'message'], defaults=(None,))
 
 
-def get_local_storage_loc():
-    return TEST_DOWNLOADS
+def _get_local_cache_loc(public: bool = True):
+    # TODO actually put this in the right place
+    # maybe lift some stuff from datastore
+    # probably also make this internal
+    subdir = 'public' if public else 'internal'
+    return f'{TEST_DOWNLOADS}/{subdir}'
 
 
-def get_beaker_datasets_base_url(public: bool = True) -> str:
+def _get_beaker_datasets_base_url(public: bool = True) -> str:
     key = PUBLIC if public else INTERNAL
     return f'{BEAKER_URLS[key]}/api/v3/datasets'
 
 
-def get_beaker_datasets_url(dataset_id: str, public: bool = True) -> str:
-    return f'{get_beaker_datasets_base_url(public)}/{dataset_id}'
+def get_beaker_dataset_url(dataset_id: str, public: bool = True) -> str:
+    return f'{_get_beaker_datasets_base_url(public)}/{dataset_id}'
 
 
-def get_beaker_dataset_details(dataset_id: str, public: bool = True) -> HTTPResponse:
-    url = get_beaker_datasets_url(dataset_id, public)
-    # res = urllib.request.urlopen(url)
-    # return json.loads(res.read())
-    # return json.loads(res.read())
+def get_beaker_dataset_info_response(dataset_id: str, public: bool = True) -> HTTPResponse:
+    url = get_beaker_dataset_url(dataset_id, public)
     return urllib.request.urlopen(url)
 
 
-def make_fileheap_request(url, dataset_details):
+def construct_fileheap_request(url, dataset_details):
     headers = {
-        'Authorization': f'Bearer {get_storage_token(dataset_details.details)}'
+        'Authorization': f'Bearer {get_storage_token(dataset_details.info)}'
     }
     return urllib.request.Request(url, headers=headers)
 
 
-def make_download_one_file_request(dataset_details: DatasetDetails):
-    url = f'{get_file_heap_base_url(dataset_details)}/files/{dataset_details.path.file}'
-    print(url)
-    return make_fileheap_request(url, dataset_details)
-    # res = urllib.request.urlopen(req)
-    # print(res.status)
+def construct_one_file_download_request(dataset_details: DatasetDetails):
+    url = f'{get_file_heap_base_url(dataset_details)}/files/{dataset_details.beaker_path.file}'
+    return construct_fileheap_request(url, dataset_details)
 
 
-def make_download_directory_request(dataset_details: DatasetDetails):
+def construct_directory_manifest_request(dataset_details: DatasetDetails):
     url = f'{get_file_heap_base_url(dataset_details)}/manifest'
-    print(url)
-    return make_fileheap_request(url, dataset_details)
-    # res = urllib.request.urlopen(req)
-    # print(res.status)
-    # print(res.read())
+    return construct_fileheap_request(url, dataset_details)
 
 
 def get_file_heap_base_url(dataset_details: DatasetDetails):
-    details = dataset_details.details
-    return f'{get_storage_address(details)}/datasets/{get_storage_id(details)}'
+    info = dataset_details.info
+    return f'{get_storage_address(info)}/datasets/{get_storage_id(info)}'
 
 
 def path(name: str) -> None:
@@ -100,102 +99,197 @@ def get_storage_token(res: dict) -> str:
     return res['storage']['token']
 
 
-# Path = collections.namedtuple('Thing', ['dataset', 'file'])
+class DatasetNotFoundError(Exception):
+    pass
 
 
-def get_dataset_details(given_path: str, public: bool = True) -> Tuple[Optional[DatasetDetails], Result]:
+def get_dataset_details(given_path: str, public: bool = True) -> DatasetDetails:
 
     split = given_path.split('/')
     curr_ds_name = split[0]
+
     try:
-        res = get_beaker_dataset_details(curr_ds_name, public)
-        dataset_details = json.loads(res.read())
+        res = get_beaker_dataset_info_response(curr_ds_name, public)
+        dataset_info = json.loads(res.read())
         file_path = '/'.join(split[1:])
-        if file_path == '':
-            file_path = None
-        path_details = Path(get_dataset_id(dataset_details), file_path, public)
-        return DatasetDetails(path_details, dataset_details), Result(True)
+        is_dir = file_path == ''
+        beaker_path = BeakerPath(get_dataset_id(dataset_info), file_path, is_dir, public)
+        return DatasetDetails(beaker_path, CachePath(beaker_path), dataset_info)
 
-
-        # print('found it!')
     except HTTPError as e:
 
         if e.code == 404:
-            # print('did not find it')
 
             if not len(split) > 1:
-                return None, Result(False, f'Could not find dataset {curr_ds_name}.')
-                # print('could not find the dataset')
-                # return
+                raise DatasetNotFoundError(f'Could not find dataset {curr_ds_name}.')
             original_ds_name = curr_ds_name
             curr_ds_name = '/'.join(split[:2])
+
             try:
-                res = get_beaker_dataset_details(curr_ds_name, public=public)
-                dataset_details = json.loads(res.read())
+                res = get_beaker_dataset_info_response(curr_ds_name, public=public)
+                dataset_info = json.loads(res.read())
                 file_path = '/'.join(split[2:])
-                if file_path == '':
-                    file_path = None
-                path_details = Path(get_dataset_id(dataset_details), file_path, public)
-                return DatasetDetails(path_details, dataset_details), Result(True)
-                # print('found it now!')
+                is_dir = file_path == ''
+                beaker_path = BeakerPath(get_dataset_id(dataset_info), file_path, is_dir, public)
+                return DatasetDetails(beaker_path, CachePath(beaker_path), dataset_info)
+
             except HTTPError as e2:
                 if e2.code == 404:
-                    return None, Result(False, f'Could not datasets. Names tried: {original_ds_name}, {curr_ds_name}.')
-                    # print('still did not find it')
+                    raise DatasetNotFoundError(
+                        f'Could not find dataset. Names tried: {original_ds_name}, {curr_ds_name}.')
                 else:
-                    return None, Result(False, f'Encountered an issue trying to find dataset {curr_ds_name}.\n{e}')
+                    raise e2
+
         else:
-            return None, Result(False, f'Encountered an issue trying to find dataset {curr_ds_name}.\n{e}')
-
-# def beaker_details_to_file_url
+            raise e
 
 
-def get_specific_local_loc(dataset_details: DatasetDetails):
-    local_path = f'{get_local_storage_loc()}/{dataset_details.path.dataset}'
-    if downloading_directory(dataset_details):
-        return local_path, None
-    else:
-        return local_path, dataset_details.path.file
-        # local_path = f'{local_path}/{dataset_details.path.file}'
-    #
-    # return local_dir, file_path
+class CachePath:
+    def __init__(self, beaker_path: BeakerPath):
+        self.subdir = beaker_path.dataset
+        self.file = beaker_path.file
+        self.is_dir = beaker_path.is_dir
+
+        self.cache_loc = _get_local_cache_loc(beaker_path.public)
+
+        # base_path = f'{self.cache_loc}/{self.subdir}'
+        # if self.is_dir:
+        #     self.cache_key = base_path
+        # else:
+        #     self.cache_key = f'{base_path}/{self.file}'
+
+    # def get_local_cache_key(self):
+    #     if self.is_dir:
+    #         return base_path
+    #     return f'{base_path}/{self.file}'
+
+    def already_exists(self):
+        if self.is_dir:
+            return os.path.exists(self.cache_key)
+        return os.path.isfile(self.cache_key)
+
+    def cache_key(self):
+        if self.is_dir:
+            return self.cache_subdir()
+        return f'{self.cache_subdir()}/{self.file}'
+
+    def cache_subdir(self):
+        return f'{self.cache_loc}/{self.subdir}'
+
+    def dir_to_files(self, file_paths):
+        return list(map(lambda p: CachePath(BeakerPath(self.subdir, p, False)), file_paths))
+
+
+
+
+
+# def cache_path_from_beaker_path(beaker_path: BeakerPath) -> CachePath:
+#     return CachePath(_get_local_cache_loc(), beaker_path.dataset,
+#                      beaker_path.file, beaker_path.is_dir)
+#
+
+# def get_local_cache_key(dataset_details: DatasetDetails):
+    # local_path = f'{_get_local_cache_loc()}/{dataset_details.beaker_path.dataset}'
+    # return cache_path_from_beaker_path(dataset_details.beaker_path)
+    # if downloading_directory(dataset_details):
+    #     return local_path, None
+    # else:
+    #     return local_path, dataset_details.beaker_path.file
 
 
 def dataset_already_exists(dataset_details: DatasetDetails):
-    local_path, local_file = get_specific_local_loc(dataset_details)
-    if downloading_directory(dataset_details):
-        return os.path.exists(local_path)
-    else:
-        return os.path.isfile(f'{local_path}/{local_file}')
+    # local_path, local_file = get_local_cache_key(dataset_details)
+    # cache_path = CachePath(dataset_details.beaker_path)
+    # cache_key = cache_path.get_local_cache_key()
+    # if cache_path.is
+    # if cache_path.is_dir:
+    #     return os.path.exists(local_path)
+    #
+    # if downloading_directory(dataset_details):
+    #     return os.path.exists(local_path)
+    # else:
+    #     return os.path.isfile(f'{local_path}/{local_file}')
+    return dataset_details.cache_path.already_exists()
 
 
-def downloading_directory(dataset_details: DatasetDetails):
-    return dataset_details.path.file is None
+# def downloading_directory(dataset_details: DatasetDetails):
+#     return dataset_details.path.file is None
 
 
 def write_file(dataset_details: DatasetDetails, res):
-    local_path, local_file = get_specific_local_loc(dataset_details)
-    if not os.path.exists(local_path):
-        os.mkdir(local_path)
-    if not downloading_directory(dataset_details):
-        print('in here')
-        with open(f'{local_path}/{local_file}', 'wb') as f:
+    # local_path, local_file = get_local_cache_key(dataset_details)
+    if not os.path.exists(dataset_details.cache_path.cache_subdir()):
+        os.mkdir(dataset_details.cache_path.cache_subdir())
+    if not dataset_details.cache_path.is_dir:
+        with open(dataset_details.cache_path.cache_key(), 'wb') as f:
             f.write(res.read())
+    # if not downloading_directory(dataset_details):
+    #     print('in here')
+    #     with open(f'{local_path}/{local_file}', 'wb') as f:
+    #         f.write(res.read())
     else:
         print('pretended to download directory')
 
 
-def download_dataset(dataset_details: DatasetDetails) -> Result:
-    if dataset_already_exists(dataset_details):
-        print('yo')
-        return Result(True)
+def download_file(dataset_details: DatasetDetails) -> None:
+    assert not dataset_already_exists(dataset_details)
+    assert not dataset_details.beaker_path.is_dir
 
-    print('file path', dataset_details.path.file)
-    if downloading_directory(dataset_details):
-        req = make_download_directory_request(dataset_details)
+    req = construct_one_file_download_request(dataset_details)
+    res = urllib.request.urlopen(req)
+    if res.code == 200:
+        if not os.path.exists(dataset_details.cache_path.cache_subdir()):
+            os.mkdir(dataset_details.cache_path.cache_subdir())
+        with open(dataset_details.cache_path.cache_key(), 'wb') as f:
+            f.write(res.read())
+
+
+# to list of strings
+def manifest_response_to_file_paths(res):
+    return list(map(lambda f: f['path'], json.loads(res.read())['files']))
+
+
+def download_directory(dataset_details: DatasetDetails) -> None:
+    assert not dataset_already_exists(dataset_details)
+    assert dataset_details.beaker_path.is_dir
+
+    dir_req = construct_directory_manifest_request(dataset_details)
+    dir_res = urllib.request.urlopen(dir_req)
+    if not dir_res.code == 200:
+        raise Exception('nooooo')
+
+    file_paths = manifest_response_to_file_paths(dir_res)
+    cache_paths = dataset_details.cache_path.dir_to_files(file_paths)
+    for cache_path in cache_paths:
+        if not os.path.exists(cache_path.cache_subdir()):
+            os.mkdir(cache_path.cache_subdir())
+        with open(cache_path.cache_key(), 'wb') as f:
+            f.write(res.read())
+
+
+    req = construct_one_file_download_request(dataset_details)
+    res = urllib.request.urlopen(req)
+    if res.code == 200:
+        cache_path = CachePath(dataset_details.beaker_path)
+        if not os.path.exists(cache_path.cache_subdir()):
+            os.mkdir(cache_path.cache_subdir())
+        with open(cache_path.cache_key(), 'wb') as f:
+            f.write(res.read())
+
+
+def download_dataset(dataset_details: DatasetDetails) -> None:
+    if dataset_already_exists(dataset_details):
+        return
+        # print('yo')
+        # return Result(True)
+
+    # print('file path', dataset_details.path.file)
+    if dataset_details.beaker_path.is_dir:
+        # if downloading_directory(dataset_details):
+        req = construct_directory_manifest_request(dataset_details)
     else:
         print('maybe in here')
-        req = make_download_one_file_request(dataset_details)
+        req = construct_one_file_download_request(dataset_details)
 
     res = urllib.request.urlopen(req)
     if res.code == 200:
