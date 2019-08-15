@@ -1,4 +1,3 @@
-import os
 import unittest
 from beakerstore import path, DatasetNotFoundError
 
@@ -8,7 +7,7 @@ class TestBeakerstore(unittest.TestCase):
     def test_directories(self):
 
         def single_directory(directory, public):
-            self.assertTrue(os.path.exists(path(directory, public=public)))
+            self.assertTrue(path(directory, public=public).exists())
 
         # by id
         single_directory('ds_bv0874n13di9', public=False)
@@ -20,7 +19,7 @@ class TestBeakerstore(unittest.TestCase):
     def test_files(self):
 
         def single_file(filename, public):
-            self.assertTrue(os.path.isfile(path(filename, public=public)))
+            self.assertTrue(path(filename, public=public).is_file())
 
         # by id
         single_file('ds_bv0874n13di9/somewords.txt', public=False)
