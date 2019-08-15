@@ -1,4 +1,6 @@
 import json
+import os
+import platform
 import urllib.request
 
 from collections import namedtuple
@@ -56,15 +58,26 @@ ItemDetails = namedtuple('ItemDetails', ['cache_item', 'beaker_info'])
 
 
 def _get_local_cache_loc(which_beaker: BeakerOptions = BeakerOptions.PUBLIC) -> Path:
-    # TODO actually put this in the right place
-    # maybe lift some stuff from datastore
 
-    default_cache_loc = 'test_downloads'
+    cache_loc_base = os.environ.get('AI2_DATASTORE_DIR')
 
-    cache_loc = Path(default_cache_loc) / 'beaker' / which_beaker.value
+    if cache_loc_base is not None:
+        cache_loc_base = Path(cache_loc_base)
+
+    else:
+        home = Path.home()
+        if platform.system() == 'Darwin':
+            cache_loc_base = home / 'Library' / 'Caches' / 'beakerstore'
+        elif platform.system() == 'Linux':
+            cache_loc_base = home / ".ai2" / 'beakerstore'
+        else:
+            raise ValueError(f'Unsupported platform: {platform.system()}')
+
+    cache_loc = cache_loc_base / which_beaker.value
 
     if not cache_loc.exists():
         cache_loc.mkdir(parents=True)
+
     return cache_loc
 
 
