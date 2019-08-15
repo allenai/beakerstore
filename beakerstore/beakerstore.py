@@ -9,10 +9,6 @@ from typing import Optional, NewType
 from urllib.error import HTTPError
 
 
-ItemDetails = namedtuple('ItemDetails', ['cache_item', 'beaker_info'])
-BeakerInfo = NewType('BeakerInfo', dict)
-
-
 class BeakerOptions(Enum):
     INTERNAL = 'internal'
     PUBLIC = 'public'
@@ -22,6 +18,9 @@ BEAKER_URLS = {
     BeakerOptions.INTERNAL: 'https://allenai.beaker.org',
     BeakerOptions.PUBLIC: 'https://beaker.org'
 }
+
+# represents the dataset info we get back from beaker
+BeakerInfo = NewType('BeakerInfo', dict)
 
 
 class CacheItem:
@@ -53,6 +52,9 @@ class CacheItem:
         return CacheItem(self.dataset_id, False, file_name, self.which_beaker)
 
 
+ItemDetails = namedtuple('ItemDetails', ['cache_item', 'beaker_info'])
+
+
 def _get_local_cache_loc(which_beaker: BeakerOptions = BeakerOptions.PUBLIC) -> Path:
     # TODO actually put this in the right place
     # maybe lift some stuff from datastore
@@ -68,14 +70,14 @@ def _get_local_cache_loc(which_beaker: BeakerOptions = BeakerOptions.PUBLIC) -> 
 
 # functions around getting details on a dataset from beaker
 
-def get_dataset_details(
+def _get_dataset_details(
         given_path: str,
         which_beaker: BeakerOptions = BeakerOptions.PUBLIC) -> ItemDetails:
 
     try:
         # this expects a format like: ds_abc
-        return get_dataset_details_helper(beaker_path_to_dataset_id(given_path), given_path,
-                                          which_beaker)
+        return _get_dataset_details_helper(_beaker_path_to_dataset_id(given_path), given_path,
+                                           which_beaker)
 
     except DatasetNotFoundError as e_id:
 
@@ -83,8 +85,8 @@ def get_dataset_details(
 
             try:
                 # we could have been given a dataset in this format: chloea/my-dataset. Try that.
-                return get_dataset_details_helper(beaker_path_to_author_and_name(given_path),
-                                                  given_path, which_beaker)
+                return _get_dataset_details_helper(_beaker_path_to_author_and_name(given_path),
+                                                   given_path, which_beaker)
 
             except DatasetNotFoundError as e_author_and_name:
                 raise DatasetNotFoundError(f'{e_id}\n{e_author_and_name}')
@@ -92,23 +94,23 @@ def get_dataset_details(
             raise e_id
 
 
-def beaker_path_to_dataset_id(given_path: str) -> str:
+def _beaker_path_to_dataset_id(given_path: str) -> str:
     return given_path.split('/')[0]
 
 
-def beaker_path_to_author_and_name(given_path: str) -> str:
+def _beaker_path_to_author_and_name(given_path: str) -> str:
     split = given_path.split('/')
     assert len(split) > 1
     return '/'.join(split[:2])
 
 
-def get_dataset_details_helper(
+def _get_dataset_details_helper(
         possible_identifier: str,
         given_path: str,
         which_beaker: BeakerOptions = BeakerOptions.PUBLIC) -> ItemDetails:
 
     try:
-        url = get_beaker_dataset_url(possible_identifier, which_beaker=which_beaker)
+        url = _get_beaker_dataset_url(possible_identifier, which_beaker=which_beaker)
         res = urllib.request.urlopen(url)
         beaker_info = json.loads(res.read())
 
@@ -116,7 +118,7 @@ def get_dataset_details_helper(
         file_path = given_path[len(possible_identifier) + 1:]
 
         is_dir = file_path == ''
-        cache_item = CacheItem(get_dataset_id(beaker_info), is_dir, file_path,
+        cache_item = CacheItem(_get_dataset_id(beaker_info), is_dir, file_path,
                                which_beaker=which_beaker)
         return ItemDetails(cache_item, beaker_info)
 
@@ -128,7 +130,7 @@ def get_dataset_details_helper(
             raise e
 
 
-def get_beaker_dataset_url(
+def _get_beaker_dataset_url(
         dataset_id: str,
         which_beaker: BeakerOptions = BeakerOptions.PUBLIC) -> str:
 
@@ -138,42 +140,42 @@ def get_beaker_dataset_url(
 
 # Functions around getting the desired information out of the details we get from beaker
 
-def get_storage_address(res: BeakerInfo) -> str:
+def _get_storage_address(res: BeakerInfo) -> str:
     return res['storage']['address']
 
 
-def get_dataset_id(res: BeakerInfo) -> str:
+def _get_dataset_id(res: BeakerInfo) -> str:
     return res['id']
 
 
-def get_storage_id(res: BeakerInfo) -> str:
+def _get_storage_id(res: BeakerInfo) -> str:
     return res['storage']['id']
 
 
-def get_storage_token(res: BeakerInfo) -> str:
+def _get_storage_token(res: BeakerInfo) -> str:
     return res['storage']['token']
 
 
-# Function around getting the desired files from fileheap
+# Functions around getting the desired files from fileheap
 
-def download(item_details) -> None:
+def _download(item_details) -> None:
     assert not item_details.cache_item.already_exists(), \
         f'The item already exists. Key {item_details.cache_item.cache_key()}'
 
     if item_details.cache_item.is_dir:
-        download_directory(item_details)
+        _download_directory(item_details)
 
     else:
-        download_file(item_details)
+        _download_file(item_details)
 
 
-def download_directory(item_details: ItemDetails) -> None:
+def _download_directory(item_details: ItemDetails) -> None:
     assert not item_details.cache_item.already_exists(), \
         f'The item already exists. Key {item_details.cache_item.cache_key()}'
     assert item_details.cache_item.is_dir, \
         f'Expected a file CacheItem. Got a directory CacheItem.'
 
-    dir_req = construct_directory_manifest_request(item_details)
+    dir_req = _construct_directory_manifest_request(item_details)
     dir_res = urllib.request.urlopen(dir_req)
 
     if not dir_res.code == 200:
@@ -188,16 +190,16 @@ def download_directory(item_details: ItemDetails) -> None:
     items_with_details = list(map(dir_to_file, file_names))
 
     for item in items_with_details:
-        download_file(item)
+        _download_file(item)
 
 
-def download_file(item_details: ItemDetails) -> None:
+def _download_file(item_details: ItemDetails) -> None:
     assert not item_details.cache_item.already_exists(), \
         f'The item already exists. Key {item_details.cache_item.cache_key()}'
     assert not item_details.cache_item.is_dir, \
         f'Expected a directory CacheItem. Got a file CacheItem.'
 
-    req = construct_one_file_download_request(item_details)
+    req = _construct_one_file_download_request(item_details)
     res = urllib.request.urlopen(req)
 
     if not res.code == 200:
@@ -209,34 +211,34 @@ def download_file(item_details: ItemDetails) -> None:
         f.write(res.read())
 
 
-def construct_directory_manifest_request(item_details: ItemDetails) -> urllib.request.Request:
-    url = f'{get_file_heap_base_url(item_details)}/manifest'
-    return construct_fileheap_request(url, item_details)
+def _construct_directory_manifest_request(item_details: ItemDetails) -> urllib.request.Request:
+    url = f'{_get_file_heap_base_url(item_details)}/manifest'
+    return _construct_fileheap_request(url, item_details)
 
 
-def construct_one_file_download_request(item_details: ItemDetails) -> urllib.request.Request:
-    url = f'{get_file_heap_base_url(item_details)}/files/{item_details.cache_item.file_name}'
-    return construct_fileheap_request(url, item_details)
+def _construct_one_file_download_request(item_details: ItemDetails) -> urllib.request.Request:
+    url = f'{_get_file_heap_base_url(item_details)}/files/{item_details.cache_item.file_name}'
+    return _construct_fileheap_request(url, item_details)
 
 
-def construct_fileheap_request(url: str, item_details: ItemDetails) -> urllib.request.Request:
+def _construct_fileheap_request(url: str, item_details: ItemDetails) -> urllib.request.Request:
     headers = {
-        'Authorization': f'Bearer {get_storage_token(item_details.beaker_info)}'
+        'Authorization': f'Bearer {_get_storage_token(item_details.beaker_info)}'
     }
     return urllib.request.Request(url, headers=headers)
 
 
-def get_file_heap_base_url(item_details: ItemDetails) -> str:
+def _get_file_heap_base_url(item_details: ItemDetails) -> str:
     info = item_details.beaker_info
-    return f'{get_storage_address(info)}/datasets/{get_storage_id(info)}'
+    return f'{_get_storage_address(info)}/datasets/{_get_storage_id(info)}'
 
 
 # the central function
 
 def path(given_path: str, which_beaker: BeakerOptions = BeakerOptions.PUBLIC) -> Path:
-    item_details = get_dataset_details(given_path, which_beaker)
+    item_details = _get_dataset_details(given_path, which_beaker)
     if not item_details.cache_item.already_exists():
-        download(item_details)
+        _download(item_details)
     return item_details.cache_item.cache_key()
 
 
