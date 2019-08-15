@@ -1,36 +1,43 @@
 import unittest
-from beakerstore import path, DatasetNotFoundError
+from beakerstore import path, DatasetNotFoundError, BeakerOptions
 
 
 class TestBeakerstore(unittest.TestCase):
 
     def test_directories(self):
 
-        def single_directory(directory, public):
-            self.assertTrue(path(directory, public=public).exists())
+        def single_directory(directory, which_beaker):
+            self.assertTrue(path(directory, which_beaker=which_beaker).exists())
 
         # by id
-        single_directory('ds_bv0874n13di9', public=False)
+        single_directory('ds_bv0874n13di9',
+                         which_beaker=BeakerOptions.INTERNAL)
         # by author and name
-        single_directory('chloea/chloea-dedupe-test-ds-2', public=False)
+        single_directory('chloea/chloea-dedupe-test-ds-2',
+                         which_beaker=BeakerOptions.INTERNAL)
         # with trailing /
-        single_directory('ds_bv0874n13di9/', public=False)
+        single_directory('ds_bv0874n13di9/',
+                         which_beaker=BeakerOptions.INTERNAL)
 
     def test_files(self):
 
-        def single_file(filename, public):
-            self.assertTrue(path(filename, public=public).is_file())
+        def single_file(filename, which_beaker):
+            self.assertTrue(path(filename, which_beaker=which_beaker).is_file())
 
         # by id
-        single_file('ds_bv0874n13di9/somewords.txt', public=False)
+        single_file('ds_bv0874n13di9/somewords.txt',
+                    which_beaker=BeakerOptions.INTERNAL)
         # by author and name
-        single_file('chloea/chloea-dedupe-test-ds-2/somewords.txt', public=False)
+        single_file('chloea/chloea-dedupe-test-ds-2/somewords.txt',
+                    which_beaker=BeakerOptions.INTERNAL)
 
     def test_nonexistent(self):
 
-        def single(name, public):
+        def single(name, which_beaker):
             with self.assertRaises(DatasetNotFoundError):
-                path(name, public=public)
+                path(name, which_beaker=which_beaker)
 
-        single('nonexistent', public=False)
-        single('chloea/nonexistent', public=False)
+        single('nonexistent',
+               which_beaker=BeakerOptions.INTERNAL)
+        single('chloea/nonexistent',
+               which_beaker=BeakerOptions.INTERNAL)
