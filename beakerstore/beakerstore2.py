@@ -133,37 +133,6 @@ def get_dataset_details_helper(
             raise e
 
 
-# def get_dataset_details_by_author_and_name(given_path: str, public: bool) -> ItemDetails:
-#
-#     return get_dataset_details_helper(given_path, public, path_to_author_and_name(given_path))
-#
-#
-# def get_dataset_details_by_id(given_path: str, public: bool = True) -> ItemDetails:
-#
-#     possible_dataset_id = path_to_dataset_id(given_path)
-#     failure_msg =
-#
-#     try:
-#         res = get_beaker_dataset_info_response(possible_dataset_id, public)
-#         dataset_info = json.loads(res.read())
-#
-#         # add 1 to get past the '/'
-#         file_path = given_path[len(possible_dataset_id) + 1:]
-#
-#         is_dir = file_path == ''
-#         cache_item = CacheItem(get_dataset_id(dataset_info), is_dir, file_path, public)
-#         return ItemDetails(cache_item, dataset_info)
-#
-#     except HTTPError as e:
-#
-#         if e.code == 404:
-#
-#             raise DatasetNotFoundError()
-#
-#         else:
-#             raise e
-
-
 def get_dataset_details(given_path: str, public: bool = True) -> ItemDetails:
 
     try:
