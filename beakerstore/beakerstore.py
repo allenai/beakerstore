@@ -272,9 +272,6 @@ def _get_storage_token(res: BeakerInfo) -> str:
 # Functions around getting the desired files from fileheap
 
 def _download(item_details) -> None:
-    if item_details.cache_item.already_exists():
-        return
-
     if item_details.cache_item.is_dir:
         _download_directory(item_details)
 
@@ -285,9 +282,6 @@ def _download(item_details) -> None:
 def _download_directory(item_details: ItemDetails) -> None:
     assert item_details.cache_item.is_dir, \
         f'Expected a file CacheItem. Got a directory CacheItem.'
-
-    if item_details.cache_item.already_exists():
-        return
 
     dir_req = _construct_directory_manifest_request(item_details)
     dir_res = urllib.request.urlopen(dir_req)
@@ -349,8 +343,7 @@ def _get_file_heap_base_url(item_details: ItemDetails) -> str:
 
 def path(given_path: str, which_beaker: BeakerOptions = BeakerOptions.PUBLIC) -> Path:
     item_details = _get_dataset_details(given_path, which_beaker)
-    if not item_details.cache_item.already_exists():
-        _download(item_details)
+    _download(item_details)
     return item_details.cache_item.item_cache_loc()
 
 
