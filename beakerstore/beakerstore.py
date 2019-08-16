@@ -37,33 +37,80 @@ class CacheItem:
 
         self.which_beaker: BeakerOptions = which_beaker
 
-    def cache_loc(self, tmp: bool = False) -> Path:
-        if not tmp:
-            return _get_local_cache_loc(self.which_beaker)
-        else:
-            return self.cache_loc(tmp=False).parent / 'tmp' / self.which_beaker.value
-
-    def cache_subdir(self) -> Path:
-        return self.cache_loc(tmp=False) / self.dataset_id
-
-    def cache_key(self) -> Path:
+    def cache_key(self) -> str:
+        subdir = f'{self.which_beaker.value}/{self.dataset_id}'
         if self.is_dir:
-            return self.cache_subdir()
-        return self.cache_subdir() / self.file_name
+            return subdir
+        return f'{subdir}/{self.file_name}'
 
-    def tmp_file_prefix(self) -> str:
-        assert not self.is_dir
-        cache_key = self.cache_key()
-        return str(cache_key)[len(str(self.cache_loc(tmp=False))) + 1:].replace('/', '%')
+    def item_cache_loc(self) -> Path:
+        return _get_local_cache_base() / self.cache_key()
 
     def already_exists(self) -> bool:
         if self.is_dir:
-            return self.cache_key().is_dir()
-        return self.cache_key().is_file()
+            return self.item_cache_loc().is_dir()
+        return self.item_cache_loc().is_file()
 
     def dir_to_file(self, file_name: str):
         assert self.is_dir, 'Expected a directory CacheItem. Got a file CacheItem.'
         return CacheItem(self.dataset_id, False, file_name, self.which_beaker)
+
+    def make_cache_entry_from_existing(self, existing: Path) -> None:
+        self._prepare_parent_dir()
+        existing.rename(self.item_cache_loc())
+
+    def make_cache_entry_from_response(self, res) -> None:
+        assert not self.is_dir, 'Expected a file CacheItem. Got a directory CacheItem.'
+
+        if self.already_exists():
+            return
+
+        self._prepare_parent_dir()
+
+        lock = CacheLock(self)
+        lock.get_lock()
+
+        # If something else downloaded this in the meantime, no need to do it once more.
+        if not self.already_exists():
+            self._write_file(res)
+
+        lock.release_lock()
+
+    def _prepare_parent_dir(self):
+        parent_dir = self.item_cache_loc().parent
+        if not parent_dir.is_dir():
+            parent_dir.mkdir(parents=True)
+
+    def _write_file(self, res) -> None:
+        assert not self.is_dir, 'Expected a file CacheItem. Got a directory CacheItem.'
+
+        if self.already_exists():
+            return
+
+        # prepare the tmp location if necessary
+        tmp_dir = _get_tmp_loc()
+        if not tmp_dir.is_dir():
+            tmp_dir.mkdir(parents=True)
+
+        # make the file
+        tmp_file = tempfile.NamedTemporaryFile(
+            dir=tmp_dir,
+            prefix=self._tmp_file_prefix(),
+            suffix='.tmp',
+            delete=False)
+
+        # write to the file
+        # TODO: read in chunks
+        tmp_file.write(res.read())
+        tmp_file.close()
+
+        # put the file in the right place
+        self.make_cache_entry_from_existing(Path(tmp_file.name))
+
+    def _tmp_file_prefix(self) -> str:
+        assert not self.is_dir, 'Expected a file CacheItem. Got a directory CacheItem.'
+        no_subdirs = self.cache_key().replace('/', '%')
+        return f'ai2-beakerstore-{no_subdirs}'
 
 
 ItemDetails = namedtuple('ItemDetails', ['cache_item', 'beaker_info'])
@@ -71,7 +118,7 @@ ItemDetails = namedtuple('ItemDetails', ['cache_item', 'beaker_info'])
 
 class CacheLock:
     def __init__(self, cache_item: CacheItem):
-        self.lock_loc = Path(f'{cache_item.cache_key()}.lock')
+        self.lock_loc = Path(f'{cache_item.item_cache_loc()}.lock')
 
     def _wait_for_lock(self) -> None:
 
@@ -100,7 +147,9 @@ class CacheLock:
         self.lock_loc.unlink()
 
 
-def _get_local_cache_loc(which_beaker: BeakerOptions = BeakerOptions.PUBLIC) -> Path:
+# cache locations
+
+def _get_local_cache_base() -> Path:
 
     cache_loc_base = os.environ.get('AI2_DATASTORE_DIR')
 
@@ -112,16 +161,18 @@ def _get_local_cache_loc(which_beaker: BeakerOptions = BeakerOptions.PUBLIC) -> 
         if platform.system() == 'Darwin':
             cache_loc_base = home / 'Library' / 'Caches' / 'beakerstore'
         elif platform.system() == 'Linux':
-            cache_loc_base = home / ".ai2" / 'beakerstore'
+            cache_loc_base = home / '.ai2' / 'beakerstore'
         else:
             raise ValueError(f'Unsupported platform: {platform.system()}')
 
-    cache_loc = cache_loc_base / which_beaker.value
+    if not cache_loc_base.is_dir():
+        cache_loc_base.mkdir(parents=True)
 
-    if not cache_loc.is_dir():
-        cache_loc.mkdir(parents=True)
+    return cache_loc_base
 
-    return cache_loc
+
+def _get_tmp_loc() -> Path:
+    return _get_local_cache_base() / 'tmp'
 
 
 # functions around getting details on a dataset from beaker
@@ -215,8 +266,8 @@ def _get_storage_token(res: BeakerInfo) -> str:
 # Functions around getting the desired files from fileheap
 
 def _download(item_details) -> None:
-    assert not item_details.cache_item.already_exists(), \
-        f'The item already exists. Key {item_details.cache_item.cache_key()}'
+    if item_details.cache_item.already_exists():
+        return
 
     if item_details.cache_item.is_dir:
         _download_directory(item_details)
@@ -226,10 +277,11 @@ def _download(item_details) -> None:
 
 
 def _download_directory(item_details: ItemDetails) -> None:
-    assert not item_details.cache_item.already_exists(), \
-        f'The item already exists. Key {item_details.cache_item.cache_key()}'
     assert item_details.cache_item.is_dir, \
         f'Expected a file CacheItem. Got a directory CacheItem.'
+
+    if item_details.cache_item.already_exists():
+        return
 
     dir_req = _construct_directory_manifest_request(item_details)
     dir_res = urllib.request.urlopen(dir_req)
@@ -250,10 +302,11 @@ def _download_directory(item_details: ItemDetails) -> None:
 
 
 def _download_file(item_details: ItemDetails) -> None:
-    assert not item_details.cache_item.already_exists(), \
-        f'The item already exists. Key {item_details.cache_item.cache_key()}'
     assert not item_details.cache_item.is_dir, \
         f'Expected a directory CacheItem. Got a file CacheItem.'
+
+    if item_details.cache_item.already_exists():
+        return
 
     req = _construct_one_file_download_request(item_details)
     res = urllib.request.urlopen(req)
@@ -261,35 +314,7 @@ def _download_file(item_details: ItemDetails) -> None:
     if not res.code == 200:
         raise BeakerstoreError(f'Unable to get the requested file. Response code: {res.code}.')
 
-    # prepare the cache sub-location
-    if not item_details.cache_item.cache_subdir().is_dir():
-        item_details.cache_item.cache_subdir().mkdir()
-
-    lock = CacheLock(item_details.cache_item)
-    lock.get_lock()
-
-    # If something else downloaded this in the meantime, no need to do it once more.
-    if not item_details.cache_item.already_exists():
-        _write_file(item_details.cache_item, res)
-
-    lock.release_lock()
-
-
-def _write_file(cache_item: CacheItem, res) -> None:
-    tmp_dir = cache_item.cache_loc(tmp=True)
-    if not tmp_dir.is_dir():
-        tmp_dir.mkdir(parents=True)
-    tmp_file_prefix = cache_item.tmp_file_prefix()
-    tmp_file = tempfile.NamedTemporaryFile(
-        dir=tmp_dir,
-        prefix=tmp_file_prefix,
-        suffix='.tmp',
-        delete=False)
-
-    # TODO: read in chunks
-    tmp_file.write(res.read())
-    tmp_file.close()
-    Path(tmp_file.name).rename(cache_item.cache_key())
+    item_details.cache_item.make_cache_entry_from_response(res)
 
 
 def _construct_directory_manifest_request(item_details: ItemDetails) -> urllib.request.Request:
@@ -320,7 +345,7 @@ def path(given_path: str, which_beaker: BeakerOptions = BeakerOptions.PUBLIC) ->
     item_details = _get_dataset_details(given_path, which_beaker)
     if not item_details.cache_item.already_exists():
         _download(item_details)
-    return item_details.cache_item.cache_key()
+    return item_details.cache_item.item_cache_loc()
 
 
 # some exceptions
