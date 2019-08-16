@@ -19,11 +19,6 @@ class BeakerOptions(Enum):
     PUBLIC = 'public'
 
 
-BEAKER_URLS = {
-    BeakerOptions.INTERNAL: 'https://allenai.beaker.org',
-    BeakerOptions.PUBLIC: 'https://beaker.org'
-}
-
 # represents the dataset info we get back from beaker
 BeakerInfo = NewType('BeakerInfo', dict)
 
@@ -248,7 +243,12 @@ def _get_beaker_dataset_url(
         dataset_id: str,
         which_beaker: BeakerOptions = BeakerOptions.PUBLIC) -> str:
 
-    base_url = f'{BEAKER_URLS[which_beaker]}/api/v3/datasets'
+    beaker_bases = {
+        BeakerOptions.INTERNAL: 'https://allenai.beaker.org',
+        BeakerOptions.PUBLIC: 'https://beaker.org'
+    }
+
+    base_url = f'{beaker_bases[which_beaker]}/api/v3/datasets'
     return f'{base_url}/{dataset_id}'
 
 
