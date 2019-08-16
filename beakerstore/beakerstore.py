@@ -59,34 +59,34 @@ ItemDetails = namedtuple('ItemDetails', ['cache_item', 'beaker_info'])
 
 
 class CacheLock:
-    def __init__(self, cache_item):
-        self.item = cache_item
+    def __init__(self, cache_item: CacheItem):
+        self.lock_loc = Path(f'{cache_item.cache_key()}.lock')
 
-    def path_to_lock_file(self) -> Path:
-        return Path(f'{self.item.cache_key()}.lock')
+    def _wait_for_lock(self) -> None:
 
-    def wait_for_lock(self) -> None:
-        lock_file_loc = self.path_to_lock_file()
-
-        if not lock_file_loc.is_file():
+        if not self.lock_loc.is_file():
             return
 
         start = time.time()
-        print(f'Waiting for the lock file here: {lock_file_loc}.')
+        print(f'Waiting for the lock file here: {self.lock_loc}.')
         last_message_time = start
 
-        while self.path_to_lock_file().is_file():
+        while self.lock_loc.is_file():
             if time.time() - last_message_time > 60:
                 now = time.time()
                 print(f'Still waiting for the lock file. It\'s been {now - start} seconds.')
                 last_message_time = now
             time.sleep(1)
 
-    def make_lock_file(self) -> None:
-        self.path_to_lock_file().touch(mode=0o644, exist_ok=False)
+    def get_lock(self) -> None:
+        self._wait_for_lock()
+        try:
+            self.lock_loc.touch(mode=0o644, exist_ok=False)
+        except FileExistsError:
+            self.get_lock()
 
-    def remove_lock_file(self) -> None:
-        self.path_to_lock_file().unlink()
+    def release_lock(self) -> None:
+        self.lock_loc.unlink()
 
 
 def _get_local_cache_loc(which_beaker: BeakerOptions = BeakerOptions.PUBLIC) -> Path:
@@ -254,42 +254,16 @@ def _download_file(item_details: ItemDetails) -> None:
     if not item_details.cache_item.cache_subdir().is_dir():
         item_details.cache_item.cache_subdir().mkdir()
 
-    lock = _acquire_lock(item_details.cache_item)
+    lock = CacheLock(item_details.cache_item)
+    lock.get_lock()
 
-    if lock is None:
-        assert item_details.cache_item.already_exists, \
-            f'The item at {item_details.cache_item.cache_key()} has disappeared!'
+    # If something else downloaded this in the meantime, no need to do it once more.
+    if not item_details.cache_item.already_exists():
+        with item_details.cache_item.cache_key().open('wb') as f:
+            # TODO: read in chunks
+            f.write(res.read())
 
-        # The desired item is already where it should be.
-        return
-
-    with item_details.cache_item.cache_key().open('wb') as f:
-        # TODO: read in chunks
-        f.write(res.read())
-
-    lock.remove_lock_file()
-
-
-def _acquire_lock(cache_item: CacheItem) -> Optional[CacheLock]:
-
-    lock = CacheLock(cache_item)
-    lock.wait_for_lock()
-
-    if cache_item.already_exists():
-        # We haven't acquired the lock, though we also don't need to.
-        return None
-
-    try:
-        lock.make_lock_file()
-    except FileExistsError as e:
-        if cache_item.already_exists():
-            # Again, we haven't acquired the lock, though we also don't need to.
-            return None
-        else:
-            raise e
-
-    # We've acquired the lock, and the item hasn't been downloaded yet.
-    return lock
+    lock.release_lock()
 
 
 def _construct_directory_manifest_request(item_details: ItemDetails) -> urllib.request.Request:
