@@ -1,3 +1,4 @@
+import atexit
 import json
 import logging
 import os
@@ -10,7 +11,7 @@ from collections import namedtuple
 from enum import Enum
 from pathlib import Path
 from random import shuffle
-from typing import Optional, NewType
+from typing import Optional, NewType, Set, Union
 
 from urllib.error import HTTPError
 
@@ -108,6 +109,7 @@ class CacheItem:
             prefix=self._tmp_file_prefix(),
             suffix='.tmp',
             delete=False)
+        remember_cleanup(tmp_file.name)
 
         # write to the file
         write_chunks(tmp_file)
@@ -115,6 +117,7 @@ class CacheItem:
 
         # put the file in the right place
         self.make_cache_entry_from_existing(Path(tmp_file.name))
+        forget_cleanup(tmp_file.name)
 
     def _tmp_file_prefix(self) -> str:
         assert not self.is_dir, 'Expected a file CacheItem. Got a directory CacheItem.'
@@ -152,11 +155,44 @@ class CacheLock:
         self._wait_for_lock()
         try:
             self.lock_loc.touch(mode=0o644, exist_ok=False)
+            remember_cleanup(self.lock_loc)
         except FileExistsError:
             self.get_lock()
 
     def release_lock(self) -> None:
         self.lock_loc.unlink()
+        forget_cleanup(self.lock_loc)
+
+
+# Cleanup stuff
+# mostly taken from https://github.com/allenai/datastore
+
+_cleanup_files: Set[Path] = set()
+
+
+def _cleanup_cleanup_files() -> None:
+    global _cleanup_files
+    for p in _cleanup_files:
+        assert p.is_absolute()   # safety
+        p.unlink()
+    _cleanup_files = set()
+
+
+atexit.register(_cleanup_cleanup_files)
+
+
+def remember_cleanup(p: Union[Path, str]) -> None:
+    global _cleanup_files
+    if type(p) is str:
+        p = Path(p)
+    _cleanup_files.add(p.absolute())
+
+
+def forget_cleanup(p: Union[Path, str]) -> None:
+    global _cleanup_files
+    if type(p) is str:
+        p = Path(p)
+    _cleanup_files.remove(p)
 
 
 # cache locations
