@@ -72,7 +72,7 @@ class CacheItem:
 
         # If something else downloaded this in the meantime, no need to do it once more.
         if not self.already_exists():
-            self._write_file(res)
+            self._write_file_from_response(res)
 
         lock.release_lock()
 
@@ -81,8 +81,15 @@ class CacheItem:
         if not parent_dir.is_dir():
             parent_dir.mkdir(parents=True)
 
-    def _write_file(self, res) -> None:
+    def _write_file_from_response(self, res) -> None:
         assert not self.is_dir, 'Expected a file CacheItem. Got a directory CacheItem.'
+
+        def write_chunks(write_to, chunk_size=1024 * 256):
+            while True:
+                chunk = res.read(chunk_size)
+                if not chunk:
+                    break
+                write_to.write(chunk)
 
         if self.already_exists():
             return
@@ -100,8 +107,7 @@ class CacheItem:
             delete=False)
 
         # write to the file
-        # TODO: read in chunks
-        tmp_file.write(res.read())
+        write_chunks(tmp_file)
         tmp_file.close()
 
         # put the file in the right place
