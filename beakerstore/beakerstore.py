@@ -1,6 +1,7 @@
 import json
 import os
 import platform
+import tempfile
 import time
 import urllib.request
 
@@ -35,15 +36,25 @@ class CacheItem:
         assert self.is_dir == (self.file_name is None)
 
         self.which_beaker: BeakerOptions = which_beaker
-        self.cache_loc: Path = _get_local_cache_loc(self.which_beaker)
+
+    def cache_loc(self, tmp: bool = False) -> Path:
+        if not tmp:
+            return _get_local_cache_loc(self.which_beaker)
+        else:
+            return self.cache_loc(tmp=False).parent / 'tmp' / self.which_beaker.value
 
     def cache_subdir(self) -> Path:
-        return self.cache_loc / self.dataset_id
+        return self.cache_loc(tmp=False) / self.dataset_id
 
     def cache_key(self) -> Path:
         if self.is_dir:
             return self.cache_subdir()
         return self.cache_subdir() / self.file_name
+
+    def tmp_file_prefix(self) -> str:
+        assert not self.is_dir
+        cache_key = self.cache_key()
+        return str(cache_key)[len(str(self.cache_loc(tmp=False))) + 1:].replace('/', '%')
 
     def already_exists(self) -> bool:
         if self.is_dir:
@@ -259,11 +270,26 @@ def _download_file(item_details: ItemDetails) -> None:
 
     # If something else downloaded this in the meantime, no need to do it once more.
     if not item_details.cache_item.already_exists():
-        with item_details.cache_item.cache_key().open('wb') as f:
-            # TODO: read in chunks
-            f.write(res.read())
+        _write_file(item_details.cache_item, res)
 
     lock.release_lock()
+
+
+def _write_file(cache_item: CacheItem, res) -> None:
+    tmp_dir = cache_item.cache_loc(tmp=True)
+    if not tmp_dir.is_dir():
+        tmp_dir.mkdir(parents=True)
+    tmp_file_prefix = cache_item.tmp_file_prefix()
+    tmp_file = tempfile.NamedTemporaryFile(
+        dir=tmp_dir,
+        prefix=tmp_file_prefix,
+        suffix='.tmp',
+        delete=False)
+
+    # TODO: read in chunks
+    tmp_file.write(res.read())
+    tmp_file.close()
+    Path(tmp_file.name).rename(cache_item.cache_key())
 
 
 def _construct_directory_manifest_request(item_details: ItemDetails) -> urllib.request.Request:
