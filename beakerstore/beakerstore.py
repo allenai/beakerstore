@@ -8,6 +8,7 @@ import urllib.request
 from collections import namedtuple
 from enum import Enum
 from pathlib import Path
+from random import shuffle
 from typing import Optional, NewType
 
 from urllib.error import HTTPError
@@ -297,6 +298,11 @@ def _download_directory(item_details: ItemDetails) -> None:
     file_names = list(map(lambda f: f['path'], json.loads(dir_res.read())['files']))
     items_with_details = list(map(dir_to_file, file_names))
 
+    # not totally necessary but it does mean that if you're running two of this at the same
+    # time on the same dataset, they may work on downloading different files (instead of going
+    # through the files in the same order, one downloading the current file, the other
+    # waiting on the lock)
+    shuffle(items_with_details)
     for item in items_with_details:
         _download_file(item)
 
