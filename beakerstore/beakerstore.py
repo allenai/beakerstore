@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import platform
 import tempfile
@@ -12,6 +13,10 @@ from random import shuffle
 from typing import Optional, NewType
 
 from urllib.error import HTTPError
+
+
+logging.basicConfig(format='%(levelname)s %(name)s %(asctime)s  %(message)s', level=logging.INFO)
+_logger = logging.getLogger('beakerstore')
 
 
 class BeakerOptions(Enum):
@@ -60,6 +65,8 @@ class CacheItem:
 
         if self.already_exists():
             return
+
+        _logger.info(f'Downloading {self.file_name} of dataset {self.dataset_id}.')
 
         self._prepare_parent_dir()
 
@@ -121,6 +128,9 @@ ItemDetails = namedtuple('ItemDetails', ['cache_item', 'beaker_info'])
 class CacheLock:
     def __init__(self, cache_item: CacheItem):
         self.lock_loc = Path(f'{cache_item.item_cache_loc()}.lock')
+        self.item_name = cache_item.dataset_id
+        if cache_item.file_name is not None:
+            self.item_name = f'{self.item_name}/{cache_item.file_name}'
 
     def _wait_for_lock(self) -> None:
 
@@ -128,13 +138,13 @@ class CacheLock:
             return
 
         start = time.time()
-        print(f'Waiting for the lock file here: {self.lock_loc}.')
+        _logger.info(f'Waiting for the lock for {self.item_name}.')
         last_message_time = start
 
         while self.lock_loc.is_file():
             if time.time() - last_message_time > 60:
                 now = time.time()
-                print(f'Still waiting for the lock file. It\'s been {now - start} seconds.')
+                _logger.info(f'Still waiting for the lock. It\'s been {now - start} seconds.')
                 last_message_time = now
             time.sleep(1)
 
@@ -275,7 +285,6 @@ def _get_storage_token(res: BeakerInfo) -> str:
 def _download(item_details) -> None:
     if item_details.cache_item.is_dir:
         _download_directory(item_details)
-
     else:
         _download_file(item_details)
 
