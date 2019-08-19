@@ -7,26 +7,52 @@ import tempfile
 import time
 import urllib.request
 
-from collections import namedtuple
 from enum import Enum
 from pathlib import Path
 from random import shuffle
-from typing import Optional, NewType, Set, Union
-
+from typing import Optional, Set, Union
 from urllib.error import HTTPError
 
+# Logging stuff
 
 logging.basicConfig(format='%(levelname)s %(name)s %(asctime)s  %(message)s', level=logging.INFO)
 _logger = logging.getLogger('beakerstore')
 
 
+# Cleanup stuff
+# mostly taken from https://github.com/allenai/datastore
+
+_cleanup_files: Set[Path] = set()
+
+
+def _cleanup_cleanup_files() -> None:
+    global _cleanup_files
+    for p in _cleanup_files:
+        assert p.is_absolute()   # safety
+        p.unlink()
+    _cleanup_files = set()
+
+
+atexit.register(_cleanup_cleanup_files)
+
+
+def remember_cleanup(p: Union[Path, str]) -> None:
+    global _cleanup_files
+    if type(p) is str:
+        p = Path(p)
+    _cleanup_files.add(p.absolute())
+
+
+def forget_cleanup(p: Union[Path, str]) -> None:
+    global _cleanup_files
+    if type(p) is str:
+        p = Path(p)
+    _cleanup_files.remove(p)
+
+
 class BeakerOptions(Enum):
     INTERNAL = 'internal'
     PUBLIC = 'public'
-
-
-# represents the dataset info we get back from beaker
-BeakerInfo = NewType('BeakerInfo', dict)
 
 
 class Cache:
@@ -66,21 +92,74 @@ class Cache:
         return self.base_path
 
 
-class CacheItem:
+class BeakerItem:
+    """Corresponds to a dataset or a file within a dataset on Beaker."""
     def __init__(self,
-                 dataset_id: str,
                  is_dir: bool,
+                 beaker_info: dict,
                  file_name: Optional[str],
-                 which_beaker: BeakerOptions):
+                 which_beaker: BeakerOptions = BeakerOptions.PUBLIC):
 
-        self.dataset_id = dataset_id
         self.is_dir = is_dir
+        self.beaker_info = beaker_info
         self.file_name = None if file_name == '' else file_name
 
         assert self.is_dir == (self.file_name is None)
 
-        self.which_beaker: BeakerOptions = which_beaker
+        self.which_beaker = which_beaker
+
+    def dataset_id(self) -> str:
+        return self.beaker_info['id']
+
+    def construct_directory_manifest_request(self) -> urllib.request.Request:
+        url = f'{self._get_file_heap_base_url()}/manifest'
+        return self._construct_fileheap_request(url)
+
+    def construct_one_file_download_request(self, name: str) -> urllib.request.Request:
+
+        # name == self.file_name corresponds to the case where the user specified a file
+        # within a dataset. is_dir is False, and this BeakerItem corresponds to one instance
+        # of FileCacheEntry.
+        # is_dir corresponds to the case where the user specified only a dataset.
+        # In addition to being attached to a DirCacheEntry instance, the corresponding BeakerItem
+        # will also be attached all the FileCacheEntry instances that correspond to the files
+        # within the dataset.
+        assert (name == self.file_name) or self.is_dir, \
+            'Was expecting a directory BeakerItem or the same filename.'
+
+        url = f'{self._get_file_heap_base_url()}/files/{name}'
+        return self._construct_fileheap_request(url)
+
+    def _get_file_heap_base_url(self) -> str:
+        return f'{self._get_storage_address()}/datasets/{self._get_storage_id()}'
+
+    def _construct_fileheap_request(self, url: str) -> urllib.request.Request:
+        headers = {
+            'Authorization': f'Bearer {self._get_storage_token()}'
+        }
+        return urllib.request.Request(url, headers=headers)
+
+    def _get_storage_address(self) -> str:
+        return self.beaker_info['storage']['address']
+
+    def _get_storage_id(self) -> str:
+        return self.beaker_info['storage']['id']
+
+    def _get_storage_token(self) -> str:
+        return self.beaker_info['storage']['token']
+
+
+class CacheEntry:
+    """Corresponds to an entry in the cache, alreadty in existence or to be created."""
+    def __init__(self, beaker_item: BeakerItem):
+        self.beaker_item = beaker_item
         self.cache = None
+
+    def which_beaker(self) -> BeakerOptions:
+        return self.beaker_item.which_beaker
+
+    def dataset_id(self) -> str:
+        return self.beaker_item.dataset_id()
 
     def get_cache(self) -> Cache:
         if self.cache is None:
@@ -90,33 +169,123 @@ class CacheItem:
     def set_cache(self, cache: Cache):
         self.cache = cache
 
-    def cache_key(self) -> str:
-        subdir = f'{self.which_beaker.value}/{self.dataset_id}'
-        if self.is_dir:
-            return subdir
-        return f'{subdir}/{self.file_name}'
+    def is_dir(self) -> bool:
+        """Does this entry correspond to a dataset?
 
-    def item_cache_loc(self) -> Path:
-        return self.get_cache().cache_base() / self.cache_key()
+         The alternative is that this entry corresponds to a file within a dataset.
+         """
+        raise NotImplementedError()
+
+    def cache_path(self) -> Path:
+        """The path to this entry in the cache."""
+        return self.cache_base() / self.cache_key()
+
+    def cache_base(self) -> Path:
+        """The path to the root of the cache."""
+        return self.get_cache().cache_base()
+
+    def cache_key(self) -> str:
+        """The key of this entry in the cache.
+
+        This is basically the relative path to this entry from the root of the cache.
+        """
+        return f'{self.which_beaker().value}/{self.item_name()}'
+
+    def item_name(self) -> str:
+        """The name of the item corresponding to this entry.
+
+        This is the dataset id, and the filename (if any). It corresponds to the cache key of this
+        entry without the 'public' or 'internal' part.
+        """
+        raise NotImplementedError()
 
     def already_exists(self) -> bool:
-        if self.is_dir:
-            return self.item_cache_loc().is_dir()
-        return self.item_cache_loc().is_file()
+        """Does this entry already exist in the cache?"""
+        raise NotImplementedError()
+
+    def _prepare_parent_dir(self):
+        parent_dir = self.cache_path().parent
+        if not parent_dir.is_dir():
+            parent_dir.mkdir(parents=True)
+
+    @staticmethod
+    def from_beaker_item(beaker_item: BeakerItem):
+        if beaker_item.is_dir:
+            return DirCacheEntry(beaker_item)
+        else:
+            return FileCacheEntry(beaker_item, beaker_item.file_name)
+
+
+class DirCacheEntry(CacheEntry):
+    def __init__(self, beaker_item: BeakerItem):
+        super().__init__(beaker_item)
+
+    def is_dir(self):
+        return True
+
+    def item_name(self) -> str:
+        return self.dataset_id()
+
+    def already_exists(self) -> bool:
+        return self.cache_path().is_dir()
+
+    def download(self) -> None:
+
+        dir_req = self.beaker_item.construct_directory_manifest_request()
+        dir_res = urllib.request.urlopen(dir_req)
+
+        if not dir_res.code == 200:
+            raise BeakerstoreError(
+                f'Unable to get the requested directory manifest. Response code: {dir_res.code}.')
+
+        file_names = list(map(lambda f: f['path'], json.loads(dir_res.read())['files']))
+        items_with_details = list(map(lambda file_name: self.dir_to_file(file_name), file_names))
+
+        # not totally necessary but it does mean that if you're running two of this at the same
+        # time on the same dataset, they may work on downloading different files (instead of going
+        # through the files in the same order, one downloading the current file, the other
+        # waiting on the lock)
+        shuffle(items_with_details)
+        for item in items_with_details:
+            item.download()
 
     def dir_to_file(self, file_name: str):
-        assert self.is_dir, 'Expected a directory CacheItem. Got a file CacheItem.'
-        item = CacheItem(self.dataset_id, False, file_name, self.which_beaker)
-        item.set_cache(self.cache)
-        return item
+        """Makes an instance of FileCacheEntry from this instance of DirCacheEntry.
 
-    def make_cache_entry_from_response(self, res) -> None:
-        assert not self.is_dir, 'Expected a file CacheItem. Got a directory CacheItem.'
+        The resulting entry corresponds to the file with filename 'file_name' within the dataset
+        that corresponds to this current entry.
+        """
+        entry = FileCacheEntry(self.beaker_item, file_name)
+        entry.set_cache(self.cache)
+        return entry
+
+
+class FileCacheEntry(CacheEntry):
+    def __init__(self, beaker_item: BeakerItem, file_name: str):
+        super().__init__(beaker_item)
+        self.file_name = file_name
+
+    def is_dir(self):
+        return False
+
+    def item_name(self) -> str:
+        return f'{self.dataset_id()}/{self.file_name}'
+
+    def already_exists(self) -> bool:
+        return self.cache_path().is_file()
+
+    def download(self) -> None:
 
         if self.already_exists():
             return
 
-        _logger.info(f'Downloading {self.file_name} of dataset {self.dataset_id}.')
+        _logger.info(f'Getting {self.file_name} of dataset {self.dataset_id()}.')
+
+        req = self.beaker_item.construct_one_file_download_request(self.file_name)
+        res = urllib.request.urlopen(req)
+
+        if not res.code == 200:
+            raise BeakerstoreError(f'Unable to get the requested file. Response code: {res.code}.')
 
         self._prepare_parent_dir()
 
@@ -129,13 +298,7 @@ class CacheItem:
 
         lock.release_lock()
 
-    def _prepare_parent_dir(self):
-        parent_dir = self.item_cache_loc().parent
-        if not parent_dir.is_dir():
-            parent_dir.mkdir(parents=True)
-
     def _write_file_from_response(self, res) -> None:
-        assert not self.is_dir, 'Expected a file CacheItem. Got a directory CacheItem.'
 
         def write_chunks(write_to, chunk_size=1024 * 256):
             while True:
@@ -165,24 +328,18 @@ class CacheItem:
         tmp_file.close()
 
         # put the file in the right place
-        Path(tmp_file.name).rename(self.item_cache_loc())
+        Path(tmp_file.name).rename(self.cache_path())
         forget_cleanup(tmp_file.name)
 
     def _tmp_file_prefix(self) -> str:
-        assert not self.is_dir, 'Expected a file CacheItem. Got a directory CacheItem.'
         no_subdirs = self.cache_key().replace('/', '%')
         return f'ai2-beakerstore-{no_subdirs}'
 
 
-ItemDetails = namedtuple('ItemDetails', ['cache_item', 'beaker_info'])
-
-
 class CacheLock:
-    def __init__(self, cache_item: CacheItem):
-        self.lock_loc = Path(f'{cache_item.item_cache_loc()}.lock')
-        self.item_name = cache_item.dataset_id
-        if cache_item.file_name is not None:
-            self.item_name = f'{self.item_name}/{cache_item.file_name}'
+    def __init__(self, cache_entry: CacheEntry):
+        self.lock_loc = Path(f'{cache_entry.cache_path()}.lock')
+        self.item_name = cache_entry.item_name()
 
     def _wait_for_lock(self) -> None:
 
@@ -213,215 +370,67 @@ class CacheLock:
         forget_cleanup(self.lock_loc)
 
 
-# Cleanup stuff
-# mostly taken from https://github.com/allenai/datastore
+class ItemRequest:
+    def __init__(self,
+                 given_path: str,
+                 which_beaker: BeakerOptions = BeakerOptions.PUBLIC):
+        self.given_path = given_path
+        self.which_beaker = which_beaker
 
-_cleanup_files: Set[Path] = set()
+    def to_beaker_item(self) -> BeakerItem:
 
+        try:
+            # this expects a format like: ds_abc
+            return self._get_dataset_details_helper(self._path_to_dataset_id())
 
-def _cleanup_cleanup_files() -> None:
-    global _cleanup_files
-    for p in _cleanup_files:
-        assert p.is_absolute()   # safety
-        p.unlink()
-    _cleanup_files = set()
+        except DatasetNotFoundError as e_id:
 
+            if len(self.given_path.split('/')) > 1:
 
-atexit.register(_cleanup_cleanup_files)
+                try:
+                    # we could have been given a dataset in this format: chloea/my-dataset.
+                    # Try that.
+                    return self._get_dataset_details_helper(self._path_to_author_and_name())
 
+                except DatasetNotFoundError as e_author_and_name:
+                    raise DatasetNotFoundError(f'{e_id}\n{e_author_and_name}')
+            else:
+                raise e_id
 
-def remember_cleanup(p: Union[Path, str]) -> None:
-    global _cleanup_files
-    if type(p) is str:
-        p = Path(p)
-    _cleanup_files.add(p.absolute())
+    def _path_to_dataset_id(self) -> str:
+        return self.given_path.split('/')[0]
 
+    def _path_to_author_and_name(self) -> str:
+        split = self.given_path.split('/')
+        assert len(split) > 1
+        return '/'.join(split[:2])
 
-def forget_cleanup(p: Union[Path, str]) -> None:
-    global _cleanup_files
-    if type(p) is str:
-        p = Path(p)
-    _cleanup_files.remove(p)
+    def _get_dataset_details_helper(self, possible_identifier: str) -> BeakerItem:
 
+        try:
+            url = self._get_beaker_dataset_url(possible_identifier)
+            res = urllib.request.urlopen(url)
+            beaker_info = json.loads(res.read())
 
-# functions around getting details on a dataset from beaker
+            # add 1 to get past the '/'
+            file_path = self.given_path[len(possible_identifier) + 1:]
 
-def _get_dataset_details(
-        given_path: str,
-        which_beaker: BeakerOptions = BeakerOptions.PUBLIC) -> ItemDetails:
+            is_dir = file_path == ''
+            return BeakerItem(is_dir, beaker_info, file_path, which_beaker=self.which_beaker)
 
-    try:
-        # this expects a format like: ds_abc
-        return _get_dataset_details_helper(_beaker_path_to_dataset_id(given_path), given_path,
-                                           which_beaker)
+        except HTTPError as e:
 
-    except DatasetNotFoundError as e_id:
+            if e.code == 404:
+                raise DatasetNotFoundError(f'Could not find dataset \'{possible_identifier}\'.')
+            else:
+                raise e
 
-        if len(given_path.split('/')) > 1:
+    def _get_beaker_dataset_url(self, identifier: str) -> str:
 
-            try:
-                # we could have been given a dataset in this format: chloea/my-dataset. Try that.
-                return _get_dataset_details_helper(_beaker_path_to_author_and_name(given_path),
-                                                   given_path, which_beaker)
+        beaker_prefix = 'allenai.' if self.which_beaker == BeakerOptions.INTERNAL else ''
+        beaker_base = f'https://{beaker_prefix}beaker.org'
 
-            except DatasetNotFoundError as e_author_and_name:
-                raise DatasetNotFoundError(f'{e_id}\n{e_author_and_name}')
-        else:
-            raise e_id
-
-
-def _beaker_path_to_dataset_id(given_path: str) -> str:
-    return given_path.split('/')[0]
-
-
-def _beaker_path_to_author_and_name(given_path: str) -> str:
-    split = given_path.split('/')
-    assert len(split) > 1
-    return '/'.join(split[:2])
-
-
-def _get_dataset_details_helper(
-        possible_identifier: str,
-        given_path: str,
-        which_beaker: BeakerOptions = BeakerOptions.PUBLIC) -> ItemDetails:
-
-    try:
-        url = _get_beaker_dataset_url(possible_identifier, which_beaker=which_beaker)
-        res = urllib.request.urlopen(url)
-        beaker_info = json.loads(res.read())
-
-        # add 1 to get past the '/'
-        file_path = given_path[len(possible_identifier) + 1:]
-
-        is_dir = file_path == ''
-        cache_item = CacheItem(_get_dataset_id(beaker_info), is_dir, file_path,
-                               which_beaker=which_beaker)
-        return ItemDetails(cache_item, beaker_info)
-
-    except HTTPError as e:
-
-        if e.code == 404:
-            raise DatasetNotFoundError(f'Could not find dataset \'{possible_identifier}\'.')
-        else:
-            raise e
-
-
-def _get_beaker_dataset_url(
-        dataset_id: str,
-        which_beaker: BeakerOptions = BeakerOptions.PUBLIC) -> str:
-
-    beaker_bases = {
-        BeakerOptions.INTERNAL: 'https://allenai.beaker.org',
-        BeakerOptions.PUBLIC: 'https://beaker.org'
-    }
-
-    base_url = f'{beaker_bases[which_beaker]}/api/v3/datasets'
-    return f'{base_url}/{dataset_id}'
-
-
-# Functions around getting the desired information out of the details we get from beaker
-
-def _get_storage_address(res: BeakerInfo) -> str:
-    return res['storage']['address']
-
-
-def _get_dataset_id(res: BeakerInfo) -> str:
-    return res['id']
-
-
-def _get_storage_id(res: BeakerInfo) -> str:
-    return res['storage']['id']
-
-
-def _get_storage_token(res: BeakerInfo) -> str:
-    return res['storage']['token']
-
-
-# Functions around getting the desired files from fileheap
-
-def _download(item_details) -> None:
-    if item_details.cache_item.is_dir:
-        _download_directory(item_details)
-    else:
-        _download_file(item_details)
-
-
-def _download_directory(item_details: ItemDetails) -> None:
-    assert item_details.cache_item.is_dir, \
-        f'Expected a file CacheItem. Got a directory CacheItem.'
-
-    dir_req = _construct_directory_manifest_request(item_details)
-    dir_res = urllib.request.urlopen(dir_req)
-
-    if not dir_res.code == 200:
-        raise BeakerstoreError(
-            f'Unable to get the requested directory manifest. Response code: {dir_res.code}.')
-
-    def dir_to_file(file_name):
-        cache_item = item_details.cache_item.dir_to_file(file_name)
-        return ItemDetails(cache_item, item_details.beaker_info)
-
-    file_names = list(map(lambda f: f['path'], json.loads(dir_res.read())['files']))
-    items_with_details = list(map(dir_to_file, file_names))
-
-    # not totally necessary but it does mean that if you're running two of this at the same
-    # time on the same dataset, they may work on downloading different files (instead of going
-    # through the files in the same order, one downloading the current file, the other
-    # waiting on the lock)
-    shuffle(items_with_details)
-    for item in items_with_details:
-        _download_file(item)
-
-
-def _download_file(item_details: ItemDetails) -> None:
-    assert not item_details.cache_item.is_dir, \
-        f'Expected a directory CacheItem. Got a file CacheItem.'
-
-    if item_details.cache_item.already_exists():
-        return
-
-    req = _construct_one_file_download_request(item_details)
-    res = urllib.request.urlopen(req)
-
-    if not res.code == 200:
-        raise BeakerstoreError(f'Unable to get the requested file. Response code: {res.code}.')
-
-    item_details.cache_item.make_cache_entry_from_response(res)
-
-
-def _construct_directory_manifest_request(item_details: ItemDetails) -> urllib.request.Request:
-    url = f'{_get_file_heap_base_url(item_details)}/manifest'
-    return _construct_fileheap_request(url, item_details)
-
-
-def _construct_one_file_download_request(item_details: ItemDetails) -> urllib.request.Request:
-    url = f'{_get_file_heap_base_url(item_details)}/files/{item_details.cache_item.file_name}'
-    return _construct_fileheap_request(url, item_details)
-
-
-def _construct_fileheap_request(url: str, item_details: ItemDetails) -> urllib.request.Request:
-    headers = {
-        'Authorization': f'Bearer {_get_storage_token(item_details.beaker_info)}'
-    }
-    return urllib.request.Request(url, headers=headers)
-
-
-def _get_file_heap_base_url(item_details: ItemDetails) -> str:
-    info = item_details.beaker_info
-    return f'{_get_storage_address(info)}/datasets/{_get_storage_id(info)}'
-
-
-# the central function
-
-def path(given_path: str,
-         which_beaker: BeakerOptions = BeakerOptions.PUBLIC,
-         cache: Optional[Cache] = None) -> Path:
-
-    item_details = _get_dataset_details(given_path, which_beaker)
-    if cache is not None:
-        item_details.cache_item.set_cache(cache)
-    _download(item_details)
-    return item_details.cache_item.item_cache_loc()
+        return f'{beaker_base}/api/v3/datasets/{identifier}'
 
 
 # some exceptions
@@ -432,3 +441,18 @@ class DatasetNotFoundError(Exception):
 
 class BeakerstoreError(Exception):
     pass
+
+
+# the central function
+
+def path(given_path: str,
+         which_beaker: BeakerOptions = BeakerOptions.PUBLIC,
+         cache: Optional[Cache] = None) -> Path:
+
+    item_request = ItemRequest(given_path, which_beaker)
+    beaker_item = item_request.to_beaker_item()
+    cache_entry = CacheEntry.from_beaker_item(beaker_item)
+    if cache is not None:
+        cache_entry.set_cache(cache)
+    cache_entry.download()
+    return cache_entry.cache_path()
