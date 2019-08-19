@@ -29,15 +29,66 @@ class BeakerOptions(Enum):
 BeakerInfo = NewType('BeakerInfo', dict)
 
 
+class Cache:
+    def __init__(self, custom_path: Optional[Path] = None):
+        self.base_path = Cache._get_default_cache_base() if custom_path is None else custom_path
+        if custom_path is not None:
+            _logger.info(f'Cache at custom path: {custom_path}')
+
+    @staticmethod
+    def _get_default_cache_base() -> Path:
+
+        # close to https://github.com/allenai/datastore
+
+        cache_loc_base = os.environ.get('AI2_DATASTORE_DIR')
+
+        if cache_loc_base is not None:
+            cache_loc_base = Path(cache_loc_base)
+
+        else:
+            home = Path.home()
+            if platform.system() == 'Darwin':
+                cache_loc_base = home / 'Library' / 'Caches' / 'beakerstore'
+            elif platform.system() == 'Linux':
+                cache_loc_base = home / '.ai2' / 'beakerstore'
+            else:
+                raise ValueError(f'Unsupported platform: {platform.system()}')
+
+        if not cache_loc_base.is_dir():
+            cache_loc_base.mkdir(parents=True)
+
+        return cache_loc_base
+
+    def tmp_loc(self) -> Path:
+        return self.base_path / 'tmp'
+
+    def cache_base(self) -> Path:
+        return self.base_path
+
+
 class CacheItem:
-    def __init__(self, dataset_id, is_dir, file_name, which_beaker: BeakerOptions):
-        self.dataset_id: str = dataset_id
-        self.is_dir: bool = is_dir
-        self.file_name: Optional[str] = None if file_name == '' else file_name
+    def __init__(self,
+                 dataset_id: str,
+                 is_dir: bool,
+                 file_name: Optional[str],
+                 which_beaker: BeakerOptions):
+
+        self.dataset_id = dataset_id
+        self.is_dir = is_dir
+        self.file_name = None if file_name == '' else file_name
 
         assert self.is_dir == (self.file_name is None)
 
         self.which_beaker: BeakerOptions = which_beaker
+        self.cache = None
+
+    def get_cache(self) -> Cache:
+        if self.cache is None:
+            self.cache = Cache()
+        return self.cache
+
+    def set_cache(self, cache: Cache):
+        self.cache = cache
 
     def cache_key(self) -> str:
         subdir = f'{self.which_beaker.value}/{self.dataset_id}'
@@ -46,7 +97,7 @@ class CacheItem:
         return f'{subdir}/{self.file_name}'
 
     def item_cache_loc(self) -> Path:
-        return _get_local_cache_base() / self.cache_key()
+        return self.get_cache().cache_base() / self.cache_key()
 
     def already_exists(self) -> bool:
         if self.is_dir:
@@ -55,11 +106,9 @@ class CacheItem:
 
     def dir_to_file(self, file_name: str):
         assert self.is_dir, 'Expected a directory CacheItem. Got a file CacheItem.'
-        return CacheItem(self.dataset_id, False, file_name, self.which_beaker)
-
-    def make_cache_entry_from_existing(self, existing: Path) -> None:
-        self._prepare_parent_dir()
-        existing.rename(self.item_cache_loc())
+        item = CacheItem(self.dataset_id, False, file_name, self.which_beaker)
+        item.set_cache(self.cache)
+        return item
 
     def make_cache_entry_from_response(self, res) -> None:
         assert not self.is_dir, 'Expected a file CacheItem. Got a directory CacheItem.'
@@ -99,7 +148,7 @@ class CacheItem:
             return
 
         # prepare the tmp location if necessary
-        tmp_dir = _get_tmp_loc()
+        tmp_dir = self.get_cache().tmp_loc()
         if not tmp_dir.is_dir():
             tmp_dir.mkdir(parents=True)
 
@@ -116,7 +165,7 @@ class CacheItem:
         tmp_file.close()
 
         # put the file in the right place
-        self.make_cache_entry_from_existing(Path(tmp_file.name))
+        Path(tmp_file.name).rename(self.item_cache_loc())
         forget_cleanup(tmp_file.name)
 
     def _tmp_file_prefix(self) -> str:
@@ -193,34 +242,6 @@ def forget_cleanup(p: Union[Path, str]) -> None:
     if type(p) is str:
         p = Path(p)
     _cleanup_files.remove(p)
-
-
-# cache locations
-
-def _get_local_cache_base() -> Path:
-
-    cache_loc_base = os.environ.get('AI2_DATASTORE_DIR')
-
-    if cache_loc_base is not None:
-        cache_loc_base = Path(cache_loc_base)
-
-    else:
-        home = Path.home()
-        if platform.system() == 'Darwin':
-            cache_loc_base = home / 'Library' / 'Caches' / 'beakerstore'
-        elif platform.system() == 'Linux':
-            cache_loc_base = home / '.ai2' / 'beakerstore'
-        else:
-            raise ValueError(f'Unsupported platform: {platform.system()}')
-
-    if not cache_loc_base.is_dir():
-        cache_loc_base.mkdir(parents=True)
-
-    return cache_loc_base
-
-
-def _get_tmp_loc() -> Path:
-    return _get_local_cache_base() / 'tmp'
 
 
 # functions around getting details on a dataset from beaker
@@ -392,8 +413,13 @@ def _get_file_heap_base_url(item_details: ItemDetails) -> str:
 
 # the central function
 
-def path(given_path: str, which_beaker: BeakerOptions = BeakerOptions.PUBLIC) -> Path:
+def path(given_path: str,
+         which_beaker: BeakerOptions = BeakerOptions.PUBLIC,
+         cache: Optional[Cache] = None) -> Path:
+
     item_details = _get_dataset_details(given_path, which_beaker)
+    if cache is not None:
+        item_details.cache_item.set_cache(cache)
     _download(item_details)
     return item_details.cache_item.item_cache_loc()
 
