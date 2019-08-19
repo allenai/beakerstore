@@ -3,7 +3,7 @@
 ## To use:
 
 ```
-import beakerstore
+from beakerstore import beakerstore
 
 # from public Beaker
 # by dataset id
