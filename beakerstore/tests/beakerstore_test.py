@@ -3,8 +3,10 @@ import unittest
 
 from pathlib import Path
 
-from beakerstore import path, DatasetNotFoundError, BeakerOptions, Cache
+from ..beakerstore import path, DatasetNotFoundError, BeakerOptions, Cache
 
+
+# TODO: separate internal beaker tests from public beaker tests. Don't run the former by default.
 
 @pytest.fixture(scope='class')
 def cache_test_dir(request, tmpdir_factory):

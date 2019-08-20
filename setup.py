@@ -1,11 +1,14 @@
 from setuptools import setup
 
+# TODO: license
 
 setup(
     name='beakerstore',
     version='0.1.0',
     description='Local store for Beaker datasets and files.',
-    py_modules=['beakerstore.beakerstore'],
-    test_suite='beakerstore_test.py',
-    tests_require=['pytest']
+    packages=['beakerstore'],
+    url='https://github.com/allenai/beakerstore',
+    author='Chloe Anastasiades',
+    author_email='chloea@allenai.org',
+    python_requires='>=3'
 )

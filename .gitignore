@@ -1,0 +1,4 @@
+beakerstore.egg-info/
+dist/
+beakerstore/__pycache__/
+build/
