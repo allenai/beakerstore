@@ -65,3 +65,10 @@ Run the tests
 ```
 pytest beakerstore/tests
 ```
+
+By default, only the tests that get datasets from public Beaker are run. If you wish to also run tests that get datasets from internal Beaker too, run
+
+```
+pytest --run-internal beakerstore/tests
+```
+This will run all the tests.
