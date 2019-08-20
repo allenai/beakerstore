@@ -1,17 +1,15 @@
 import atexit
-import json
 import logging
 import os
 import platform
+import requests
 import tempfile
 import time
-import urllib.request
 
 from enum import Enum
 from pathlib import Path
 from random import shuffle
 from typing import Optional, Set, Union
-from urllib.error import HTTPError
 
 # Logging stuff
 
@@ -111,11 +109,11 @@ class BeakerItem:
     def dataset_id(self) -> str:
         return self.beaker_info['id']
 
-    def construct_directory_manifest_request(self) -> urllib.request.Request:
+    def make_directory_manifest_request(self) -> requests.Response:
         url = f'{self._get_file_heap_base_url()}/manifest'
-        return self._construct_fileheap_request(url)
+        return self._make_fileheap_request(url)
 
-    def construct_one_file_download_request(self, name: str) -> urllib.request.Request:
+    def make_one_file_download_request(self, name: str) -> requests.Response:
 
         # name == self.file_name corresponds to the case where the user specified a file
         # within a dataset. is_dir is False, and this BeakerItem corresponds to one instance
@@ -128,16 +126,16 @@ class BeakerItem:
             'Was expecting a directory BeakerItem or the same filename.'
 
         url = f'{self._get_file_heap_base_url()}/files/{name}'
-        return self._construct_fileheap_request(url)
+        return self._make_fileheap_request(url, stream=True)
 
     def _get_file_heap_base_url(self) -> str:
         return f'{self._get_storage_address()}/datasets/{self._get_storage_id()}'
 
-    def _construct_fileheap_request(self, url: str) -> urllib.request.Request:
+    def _make_fileheap_request(self, url: str, stream=False) -> requests.Response:
         headers = {
             'Authorization': f'Bearer {self._get_storage_token()}'
         }
-        return urllib.request.Request(url, headers=headers)
+        return requests.get(url, headers=headers, stream=stream)
 
     def _get_storage_address(self) -> str:
         return self.beaker_info['storage']['address']
@@ -150,7 +148,7 @@ class BeakerItem:
 
 
 class CacheEntry:
-    """Corresponds to an entry in the cache, alreadty in existence or to be created."""
+    """Corresponds to an entry in the cache, already in existence or to be created."""
     def __init__(self, beaker_item: BeakerItem):
         self.beaker_item = beaker_item
         self.cache = None
@@ -231,14 +229,14 @@ class DirCacheEntry(CacheEntry):
 
     def download(self) -> None:
 
-        dir_req = self.beaker_item.construct_directory_manifest_request()
-        dir_res = urllib.request.urlopen(dir_req)
+        dir_res = self.beaker_item.make_directory_manifest_request()
 
-        if not dir_res.code == 200:
+        if not dir_res.status_code == 200:
             raise BeakerstoreError(
-                f'Unable to get the requested directory manifest. Response code: {dir_res.code}.')
+                (f'Unable to get the requested directory manifest. '
+                 f'Response code: {dir_res.status_code}.'))
 
-        file_names = list(map(lambda f: f['path'], json.loads(dir_res.read())['files']))
+        file_names = list(map(lambda f: f['path'], dir_res.json()['files']))
         items_with_details = list(map(lambda file_name: self.dir_to_file(file_name), file_names))
 
         # not totally necessary but it does mean that if you're running two of this at the same
@@ -281,11 +279,11 @@ class FileCacheEntry(CacheEntry):
 
         _logger.info(f'Getting {self.file_name} of dataset {self.dataset_id()}.')
 
-        req = self.beaker_item.construct_one_file_download_request(self.file_name)
-        res = urllib.request.urlopen(req)
+        res = self.beaker_item.make_one_file_download_request(self.file_name)
 
-        if not res.code == 200:
-            raise BeakerstoreError(f'Unable to get the requested file. Response code: {res.code}.')
+        if not res.status_code == 200:
+            raise BeakerstoreError((f'Unable to get the requested file. '
+                                    f'Response code: {res.status_code}.'))
 
         self._prepare_parent_dir()
 
@@ -298,14 +296,12 @@ class FileCacheEntry(CacheEntry):
 
         lock.release_lock()
 
-    def _write_file_from_response(self, res) -> None:
+    def _write_file_from_response(self, res: requests.Response) -> None:
 
         def write_chunks(write_to, chunk_size=1024 * 256):
-            while True:
-                chunk = res.read(chunk_size)
-                if not chunk:
-                    break
-                write_to.write(chunk)
+            for chunk in res.iter_content(chunk_size=chunk_size):
+                if chunk:
+                    write_to.write(chunk)
 
         if self.already_exists():
             return
@@ -407,10 +403,10 @@ class ItemRequest:
 
     def _get_dataset_details_helper(self, possible_identifier: str) -> BeakerItem:
 
-        try:
-            url = self._get_beaker_dataset_url(possible_identifier)
-            res = urllib.request.urlopen(url)
-            beaker_info = json.loads(res.read())
+        res = requests.get(self._get_beaker_dataset_url(possible_identifier))
+
+        if res.status_code == 200:
+            beaker_info = res.json()
 
             # add 1 to get past the '/'
             file_path = self.given_path[len(possible_identifier) + 1:]
@@ -418,12 +414,13 @@ class ItemRequest:
             is_dir = file_path == ''
             return BeakerItem(is_dir, beaker_info, file_path, which_beaker=self.which_beaker)
 
-        except HTTPError as e:
+        elif res.status_code == 404:
+            raise DatasetNotFoundError(f'Could not find dataset \'{possible_identifier}\'.')
 
-            if e.code == 404:
-                raise DatasetNotFoundError(f'Could not find dataset \'{possible_identifier}\'.')
-            else:
-                raise e
+        else:
+            raise BeakerstoreError(
+                (f'Encountered a problem when trying to find dataset \'{possible_identifier}\'. '
+                 f'Response status code: {res.status_code}.'))
 
     def _get_beaker_dataset_url(self, identifier: str) -> str:
 

@@ -10,5 +10,8 @@ setup(
     url='https://github.com/allenai/beakerstore',
     author='Chloe Anastasiades',
     author_email='chloea@allenai.org',
-    python_requires='>=3'
+    python_requires='>=3',
+    install_requires=[
+        'requests >= 2.22.0'
+    ]
 )
