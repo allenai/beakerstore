@@ -67,7 +67,7 @@ The `.whl` file will be in the `dist` directory. You can then use `pip install <
 
 ### 'Releasing' beakerstore
 
-Update the version number in [setup.py](./setup.py).
+Update the version number in [version.py](./beakerstore/version.py).
 
 Build beakerstore locally as described in the [section above](./README.md#building-beakerstore-locally).
 
