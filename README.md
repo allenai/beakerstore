@@ -8,11 +8,13 @@ So far, you can use `beakerstore` for public datasets on either public Beaker or
 
 ## Getting beakerstore
 
-Run
+Clone this repo. Then run
 
 ```
-pip install https://github.com/allenai/beakerstore/releases/download/v0.1.0/beakerstore-0.1.0-py3-none-any.whl
+python setup.py bdist_wheel
 ```
+
+The `.whl` file will be in the `dist` directory. You can then use `pip install <path to the .whl file>` to install it.
 
 ## Using beakerstore
 
@@ -50,30 +52,7 @@ p = beakerstore.path('ds_qrs', cache=custom_cache)
 
 You can see another example of this if you look at the tests [here](./beakerstore/tests/beakerstore_test.py).
 
-## Working on beakerstore
-
-The following instructions assume you've cloned this repo.
-
-### Building beakerstore locally
-
-Run
-
-```
-python setup.py sdist bdist_wheel
-```
-
-The `.whl` file will be in the `dist` directory. You can then use `pip install <path to the .whl file>` to install it.
-
-
-### 'Releasing' beakerstore
-
-Update the version number in [version.py](./beakerstore/version.py).
-
-Build beakerstore locally as described in the [section above](./README.md#building-beakerstore-locally).
-
-Create a release on GitHub (documentation [here](https://help.github.com/en/articles/creating-releases)). Attach the `.tar.gz` and `.whl` files in the `dist` directory that were created when you built beakerstore locally to the release.
-
-### Running the tests
+## Running the tests
 
 Get pytest
 
