@@ -100,7 +100,10 @@ class BeakerItem:
                  file_name: Optional[str],
                  which_beaker: BeakerOptions = BeakerOptions.PUBLIC):
 
+        # Note: this corresponds to whether the user wants a whole dataset, or just a file
+        # within a dataset. This is different from the Beaker single-file dataset idea.
         self.is_dir = is_dir
+
         self.beaker_info = beaker_info
         self.file_name = None if file_name == '' else file_name
 
@@ -177,6 +180,8 @@ class CacheEntry:
         """Does this entry correspond to a dataset?
 
          The alternative is that this entry corresponds to a file within a dataset.
+         Note: this does not correspond to whether this represents a single-file Beaker dataset
+         or not.
          """
         raise NotImplementedError()
 
