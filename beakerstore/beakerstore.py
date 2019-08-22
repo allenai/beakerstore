@@ -66,7 +66,7 @@ class Cache:
 
         # close to https://github.com/allenai/datastore
 
-        cache_loc_base = os.environ.get('AI2_DATASTORE_DIR')
+        cache_loc_base = os.environ.get('AI2_BEAKERSTORE_DIR')
 
         if cache_loc_base is not None:
             cache_loc_base = Path(cache_loc_base)
