@@ -1,10 +1,14 @@
 from setuptools import setup
 
+version = {}
+with open('beakerstore/version.py') as v:
+    exec(v.read(), version)
+
 # TODO: license
 
 setup(
     name='beakerstore',
-    version='0.1.0',
+    version=version['__version__'],
     description='Local store for Beaker datasets and files.',
     packages=['beakerstore'],
     url='https://github.com/allenai/beakerstore',

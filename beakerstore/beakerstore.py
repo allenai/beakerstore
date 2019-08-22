@@ -11,6 +11,8 @@ from pathlib import Path
 from random import shuffle
 from typing import Optional, Set, Union
 
+from . import __version__
+
 # Logging stuff
 
 logging.basicConfig(format='%(levelname)s %(name)s %(asctime)s  %(message)s', level=logging.INFO)
@@ -109,11 +111,11 @@ class BeakerItem:
     def dataset_id(self) -> str:
         return self.beaker_info['id']
 
-    def make_directory_manifest_request(self) -> requests.Response:
+    def make_directory_manifest_request(self, sess: requests.Session) -> requests.Response:
         url = f'{self._get_file_heap_base_url()}/manifest'
-        return self._make_fileheap_request(url)
+        return self._make_fileheap_request(url, sess)
 
-    def make_one_file_download_request(self, name: str) -> requests.Response:
+    def make_one_file_download_request(self, name: str, sess: requests.Session) -> requests.Response:
 
         # name == self.file_name corresponds to the case where the user specified a file
         # within a dataset. is_dir is False, and this BeakerItem corresponds to one instance
@@ -126,16 +128,20 @@ class BeakerItem:
             'Was expecting a directory BeakerItem or the same filename.'
 
         url = f'{self._get_file_heap_base_url()}/files/{name}'
-        return self._make_fileheap_request(url, stream=True)
+        return self._make_fileheap_request(url, sess, stream=True)
 
     def _get_file_heap_base_url(self) -> str:
         return f'{self._get_storage_address()}/datasets/{self._get_storage_id()}'
 
-    def _make_fileheap_request(self, url: str, stream=False) -> requests.Response:
+    def _make_fileheap_request(self,
+                               url: str,
+                               sess: requests.Session,
+                               stream: bool = False) -> requests.Response:
         headers = {
             'Authorization': f'Bearer {self._get_storage_token()}'
         }
-        return requests.get(url, headers=headers, stream=stream)
+
+        return sess.get(url, headers=headers, stream=stream)
 
     def _get_storage_address(self) -> str:
         return self.beaker_info['storage']['address']
@@ -201,6 +207,10 @@ class CacheEntry:
         """Does this entry already exist in the cache?"""
         raise NotImplementedError()
 
+    def download(self, sess: requests.Session) -> bool:
+        """Download the Beaker dataset or file to the corresponding cache location."""
+        raise NotImplementedError()
+
     def _prepare_parent_dir(self):
         parent_dir = self.cache_path().parent
         if not parent_dir.is_dir():
@@ -227,9 +237,9 @@ class DirCacheEntry(CacheEntry):
     def already_exists(self) -> bool:
         return self.cache_path().is_dir()
 
-    def download(self) -> None:
+    def download(self, sess: requests.Session) -> None:
 
-        dir_res = self.beaker_item.make_directory_manifest_request()
+        dir_res = self.beaker_item.make_directory_manifest_request(sess)
 
         if not dir_res.status_code == 200:
             raise BeakerstoreError(
@@ -245,7 +255,7 @@ class DirCacheEntry(CacheEntry):
         # waiting on the lock)
         shuffle(items_with_details)
         for item in items_with_details:
-            item.download()
+            item.download(sess)
 
     def dir_to_file(self, file_name: str):
         """Makes an instance of FileCacheEntry from this instance of DirCacheEntry.
@@ -272,14 +282,14 @@ class FileCacheEntry(CacheEntry):
     def already_exists(self) -> bool:
         return self.cache_path().is_file()
 
-    def download(self) -> None:
+    def download(self, sess: requests.Session) -> None:
 
         if self.already_exists():
             return
 
         _logger.info(f'Getting {self.file_name} of dataset {self.dataset_id()}.')
 
-        res = self.beaker_item.make_one_file_download_request(self.file_name)
+        res = self.beaker_item.make_one_file_download_request(self.file_name, sess)
 
         if not res.status_code == 200:
             raise BeakerstoreError((f'Unable to get the requested file. '
@@ -373,11 +383,11 @@ class ItemRequest:
         self.given_path = given_path
         self.which_beaker = which_beaker
 
-    def to_beaker_item(self) -> BeakerItem:
+    def to_beaker_item(self, sess: requests.Session) -> BeakerItem:
 
         try:
             # this expects a format like: ds_abc
-            return self._get_dataset_details_helper(self._path_to_dataset_id())
+            return self._get_dataset_details_helper(self._path_to_dataset_id(), sess)
 
         except DatasetNotFoundError as e_id:
 
@@ -386,7 +396,7 @@ class ItemRequest:
                 try:
                     # we could have been given a dataset in this format: chloea/my-dataset.
                     # Try that.
-                    return self._get_dataset_details_helper(self._path_to_author_and_name())
+                    return self._get_dataset_details_helper(self._path_to_author_and_name(), sess)
 
                 except DatasetNotFoundError as e_author_and_name:
                     raise DatasetNotFoundError(f'{e_id}\n{e_author_and_name}')
@@ -401,9 +411,11 @@ class ItemRequest:
         assert len(split) > 1
         return '/'.join(split[:2])
 
-    def _get_dataset_details_helper(self, possible_identifier: str) -> BeakerItem:
+    def _get_dataset_details_helper(self,
+                                    possible_identifier: str,
+                                    sess: requests.Session) -> BeakerItem:
 
-        res = requests.get(self._get_beaker_dataset_url(possible_identifier))
+        res = sess.get(self._get_beaker_dataset_url(possible_identifier))
 
         if res.status_code == 200:
             beaker_info = res.json()
@@ -446,10 +458,13 @@ def path(given_path: str,
          which_beaker: BeakerOptions = BeakerOptions.PUBLIC,
          cache: Optional[Cache] = None) -> Path:
 
+    sess = requests.Session()
+    sess.headers.update({'User-Agent': f'beakerstore/{__version__}'})
+
     item_request = ItemRequest(given_path, which_beaker)
-    beaker_item = item_request.to_beaker_item()
+    beaker_item = item_request.to_beaker_item(sess)
     cache_entry = CacheEntry.from_beaker_item(beaker_item)
     if cache is not None:
         cache_entry.set_cache(cache)
-    cache_entry.download()
+    cache_entry.download(sess)
     return cache_entry.cache_path()
