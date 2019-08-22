@@ -208,10 +208,6 @@ class CacheEntry:
         """
         raise NotImplementedError()
 
-    def already_exists(self) -> bool:
-        """Does this entry already exist in the cache?"""
-        raise NotImplementedError()
-
     def download(self, sess: requests.Session) -> bool:
         """Download the Beaker dataset or file to the corresponding cache location."""
         raise NotImplementedError()
@@ -238,9 +234,6 @@ class DirCacheEntry(CacheEntry):
 
     def item_name(self) -> str:
         return self.dataset_id()
-
-    def already_exists(self) -> bool:
-        return self.cache_path().is_dir()
 
     def download(self, sess: requests.Session) -> None:
 
@@ -285,6 +278,7 @@ class FileCacheEntry(CacheEntry):
         return f'{self.dataset_id()}/{self.file_name}'
 
     def already_exists(self) -> bool:
+        """Does this entry already exist in the cache?"""
         return self.cache_path().is_file()
 
     def download(self, sess: requests.Session) -> None:
