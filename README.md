@@ -26,8 +26,8 @@ p = beakerstore.path('ds_ghij/my_file.txt')
 ```
 ```
 # If you're able to talk to internal Beaker and you want a dataset (or a file from a dataset) from there:
-p = beakerstore.path('ds_def', beakerstore.beakerstore.BeakerOptions.INTERNAL)
-p = beakerstore.path('ds_klmnop/my_other_file.txt', beakerstore.beakerstore.BeakerOptions.INTERNAL)
+p = beakerstore.path('ds_def', beakerstore.BeakerOptions.INTERNAL)
+p = beakerstore.path('ds_klmnop/my_other_file.txt', beakerstore.BeakerOptions.INTERNAL)
 ```
 
 ## Working on beakerstore

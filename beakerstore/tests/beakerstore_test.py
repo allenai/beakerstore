@@ -3,7 +3,8 @@ import unittest
 
 from pathlib import Path
 
-from ..beakerstore import path, DatasetNotFoundError, BeakerOptions, Cache
+from .. import path, BeakerOptions
+from ..beakerstore import Cache, DatasetNotFoundError
 
 
 @pytest.fixture(scope='class')

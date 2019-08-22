@@ -1,2 +1,2 @@
 from .version import __version__
-from .beakerstore import path
+from .beakerstore import BeakerOptions, path
