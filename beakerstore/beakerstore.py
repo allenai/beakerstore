@@ -414,7 +414,14 @@ class ItemRequest:
                                     possible_identifier: str,
                                     sess: requests.Session) -> BeakerItem:
 
-        res = sess.get(self._get_beaker_dataset_url(possible_identifier))
+        try:
+            res = sess.get(self._get_beaker_dataset_url(possible_identifier), timeout=10)
+        except requests.exceptions.ConnectTimeout as e:
+            if self.which_beaker == BeakerOptions.INTERNAL:
+                raise BeakerstoreError(('Unable to connect to internal Beaker. '
+                                       'Are you set up to talk to it?'))
+            else:
+                raise e
 
         if res.status_code == 200:
             beaker_info = res.json()
