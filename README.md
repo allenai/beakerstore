@@ -1,6 +1,10 @@
 # beakerstore
 
-## TODO: What is beakerstore?
+`beakerstore` is a tool. You can use it to get a local path to a Beaker dataset or a file within a Beaker dataset.
+
+The first time you attempt to access a dataset (or a file within a dataset), `beakerstore` will get the dataset/file from Beaker, and store it somewhere. If you try to access the same item in the future, `beakerstore` will notice that it is already present, and not attempt to download it again.
+
+So far, you can use `beakerstore` for public datasets on either public Beaker or internal Beaker.
 
 ## Getting beakerstore
 
@@ -29,6 +33,22 @@ p = beakerstore.path('ds_ghij/my_file.txt')
 p = beakerstore.path('ds_def', beakerstore.BeakerOptions.INTERNAL)
 p = beakerstore.path('ds_klmnop/my_other_file.txt', beakerstore.BeakerOptions.INTERNAL)
 ```
+
+## Adjusting the cache location
+
+By default, `beakerstore` will store the items you request in `~/Library/Caches/beakerstore` (Mac) or `~/.ai2/beakerstore` (Linux).
+
+You can change this by setting the `AI2_BEAKERSTORE_DIR` environment variable.
+
+You can also change this by creating an instance of `Cache` with the desired path, and passing this to the `path()` function.
+
+For example:
+```
+custom_cache = beakerstore.beakerstore.Cache(Path('path/to/some/location'))
+p = beakerstore.path('ds_qrs', cache=custom_cache)
+```
+
+You can see another example of this if you look at the tests [here](./beakerstore/tests/beakerstore_test.py).
 
 ## Working on beakerstore
 
