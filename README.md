@@ -6,7 +6,9 @@ The first time you attempt to access a dataset (or a file within a dataset), `be
 
 So far, you can use `beakerstore` for public datasets on either public Beaker or internal Beaker.
 
-## Getting beakerstore
+## Getting started
+
+### Getting beakerstore
 
 Clone this repo. Then run
 
@@ -14,9 +16,13 @@ Clone this repo. Then run
 python setup.py bdist_wheel
 ```
 
+in an environment with Python 3.
+
 The `.whl` file will be in the `dist` directory. You can then use `pip install <path to the .whl file>` to install it.
 
-## Using beakerstore
+### Using beakerstore
+
+Once, you've installed `beakerstore`, you can do things like:
 
 ```
 import beakerstore
@@ -36,7 +42,7 @@ p = beakerstore.path('ds_def', beakerstore.BeakerOptions.INTERNAL)
 p = beakerstore.path('ds_klmnop/my_other_file.txt', beakerstore.BeakerOptions.INTERNAL)
 ```
 
-## Adjusting the cache location
+#### Adjusting the cache location
 
 By default, `beakerstore` will store the items you request in `~/Library/Caches/beakerstore` (Mac) or `~/.ai2/beakerstore` (Linux).
 
@@ -52,7 +58,11 @@ p = beakerstore.path('ds_qrs', cache=custom_cache)
 
 You can see another example of this if you look at the tests [here](./beakerstore/tests/beakerstore_test.py).
 
-## Running the tests
+## Working on beakerstore
+
+If you'd like to improve `beakerstore`, please feel free to fork this repo, and open a pull request!
+
+### Running the tests
 
 Get pytest
 
@@ -71,3 +81,7 @@ By default, only the tests that get datasets from public Beaker are run. If you 
 pytest --run-internal beakerstore/tests
 ```
 This will run all the tests.
+
+## Questions
+
+Have a question? Please feel free to open an issue.
