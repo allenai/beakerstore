@@ -10,15 +10,9 @@ You can use `beakerstore` for public datasets on either public Beaker or interna
 
 ### Getting beakerstore
 
-Clone this repo. Then run
-
 ```
-python setup.py bdist_wheel
+pip install http://pip-package.ari.ai2/beakerstore-1.0.0-py3-none-any.whl
 ```
-
-in an environment with Python 3.
-
-The `.whl` file will be in the `dist` directory. You can then use `pip install <path to the .whl file>` to install it.
 
 ### Using beakerstore
 
