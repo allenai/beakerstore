@@ -1,10 +1,10 @@
 # beakerstore
 
-`beakerstore` is a tool. You can use it to get a local path to a Beaker dataset or a file within a Beaker dataset.
+`beakerstore` is a library. You use it to get a local path to a Beaker dataset, or a file within a Beaker dataset.
 
-The first time you attempt to access a dataset (or a file within a dataset), `beakerstore` will get the dataset/file from Beaker, and store it somewhere. If you try to access the same item in the future, `beakerstore` will notice that it is already present, and not attempt to download it again.
+The first time you attempt to access a dataset (or a file within a dataset), `beakerstore` will get the dataset/file from Beaker, and store on the local file system. If you try to access the same item in the future, `beakerstore` will notice that it is already present, and not attempt to download it again.
 
-So far, you can use `beakerstore` for public datasets on either public Beaker or internal Beaker.
+You can use `beakerstore` for public datasets on either public Beaker or internal Beaker.
 
 ## Getting started
 
