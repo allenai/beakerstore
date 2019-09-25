@@ -11,7 +11,7 @@ You can use `beakerstore` for public datasets on either public Beaker or interna
 ### Getting beakerstore
 
 ```
-pip install http://pip-package.ari.ai2/beakerstore-1.0.0-py3-none-any.whl
+pip install https://github.com/allenai/beakerstore/releases/download/v1.0.0/beakerstore-1.0.0-py3-none-any.whl
 ```
 
 ### Using beakerstore
