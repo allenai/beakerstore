@@ -44,6 +44,10 @@ class TestBeakerStorePublic(TestBeakerstore):
         self.single_directory_helper('ds_jq5fmdtd46zf', which_beaker=BeakerOptions.PUBLIC,
                                      test_cache=test_cache)
 
+        # a dataset with enough files to have multiple pages of paths
+        self.single_directory_helper('ds_w9w18mnetswx', which_beaker=BeakerOptions.PUBLIC,
+                                     test_cache=test_cache)
+
     def test_file(self):
         test_cache = Cache(Path(str(self.tmpdir)))
 
