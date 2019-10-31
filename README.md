@@ -1,6 +1,6 @@
 # beakerstore
 
-`beakerstore` is a library. You use it to get a local path to a Beaker dataset, or a file within a Beaker dataset.
+`beakerstore` is a library. You use it to get a local path to a public Beaker dataset, or a file within a public Beaker dataset.
 
 The first time you attempt to access a dataset (or a file within a dataset), `beakerstore` will get the dataset/file from Beaker, and store on the local file system. If you try to access the same item in the future, `beakerstore` will notice that it is already present, and not attempt to download it again.
 
@@ -10,15 +10,9 @@ You can use `beakerstore` for public datasets on either public Beaker or interna
 
 ### Getting beakerstore
 
-Clone this repo. Then run
-
 ```
-python setup.py bdist_wheel
+pip install https://github.com/allenai/beakerstore/releases/download/v1.0.0/beakerstore-1.0.0-py3-none-any.whl
 ```
-
-in an environment with Python 3.
-
-The `.whl` file will be in the `dist` directory. You can then use `pip install <path to the .whl file>` to install it.
 
 ### Using beakerstore
 
