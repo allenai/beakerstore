@@ -1,4 +1,5 @@
 import pytest
+import os
 import unittest
 
 from pathlib import Path
@@ -14,8 +15,10 @@ def cache_test_dir(request, tmpdir_factory):
 
 class TestBeakerstore(unittest.TestCase):
 
-    def single_directory_helper(self, directory, which_beaker, test_cache):
-        self.assertTrue(path(directory, which_beaker=which_beaker, cache=test_cache).exists())
+    def single_directory_helper(self, directory, which_beaker, test_cache, exp_num_files):
+        dirpath = path(directory, which_beaker=which_beaker, cache=test_cache)
+        self.assertTrue(dirpath.exists())
+        self.assertEqual(len(os.listdir(str(dirpath))), exp_num_files)
 
     def single_file_helper(self, filename, which_beaker, test_cache):
         self.assertTrue(path(filename, which_beaker=which_beaker, cache=test_cache).is_file())
@@ -34,15 +37,19 @@ class TestBeakerStorePublic(TestBeakerstore):
         # moby (around 1.2MiB)
         # by id
         self.single_directory_helper('ds_1hz9k6sgxi0a', which_beaker=BeakerOptions.PUBLIC,
-                                     test_cache=test_cache)
+                                     test_cache=test_cache, exp_num_files=1)
 
         # by author and name
         self.single_directory_helper('examples/moby', which_beaker=BeakerOptions.PUBLIC,
-                                     test_cache=test_cache)
+                                     test_cache=test_cache, exp_num_files=1)
 
         # a larger dataset (around 182.5MiB)
         self.single_directory_helper('ds_jq5fmdtd46zf', which_beaker=BeakerOptions.PUBLIC,
-                                     test_cache=test_cache)
+                                     test_cache=test_cache, exp_num_files=1)
+
+        # a dataset with enough files to have multiple pages of paths
+        self.single_directory_helper('ds_w9w18mnetswx', which_beaker=BeakerOptions.PUBLIC,
+                                     test_cache=test_cache, exp_num_files=2222)
 
     def test_file(self):
         test_cache = Cache(Path(str(self.tmpdir)))
@@ -74,13 +81,16 @@ class TestBeakerStoreInternal(TestBeakerstore):
 
         # by id
         self.single_directory_helper('ds_bv0874n13di9',
-                                     which_beaker=BeakerOptions.INTERNAL, test_cache=test_cache)
+                                     which_beaker=BeakerOptions.INTERNAL, test_cache=test_cache,
+                                     exp_num_files=1)
         # by author and name
         self.single_directory_helper('chloea/chloea-dedupe-test-ds-2',
-                                     which_beaker=BeakerOptions.INTERNAL, test_cache=test_cache)
+                                     which_beaker=BeakerOptions.INTERNAL, test_cache=test_cache,
+                                     exp_num_files=1)
         # larger file
         self.single_directory_helper('ds_0tssnayto2v2',
-                                     which_beaker=BeakerOptions.INTERNAL, test_cache=test_cache)
+                                     which_beaker=BeakerOptions.INTERNAL, test_cache=test_cache,
+                                     exp_num_files=1)
 
     @pytest.mark.internal
     def test_file(self):

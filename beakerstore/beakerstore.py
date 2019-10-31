@@ -114,9 +114,10 @@ class BeakerItem:
     def dataset_id(self) -> str:
         return self.beaker_info['id']
 
-    def make_directory_manifest_request(self, sess: requests.Session) -> requests.Response:
+    def make_directory_manifest_request(self, sess: requests.Session, cursor: Optional[str]) -> requests.Response:
         url = f'{self._get_file_heap_base_url()}/manifest'
-        return self._make_fileheap_request(url, sess)
+        params = {'cursor': cursor} if cursor is not None else None
+        return self._make_fileheap_request(url, sess, params=params)
 
     def make_one_file_download_request(self, name: str, sess: requests.Session) -> requests.Response:
 
@@ -139,12 +140,13 @@ class BeakerItem:
     def _make_fileheap_request(self,
                                url: str,
                                sess: requests.Session,
+                               params: Optional[dict] = None,
                                stream: bool = False) -> requests.Response:
         headers = {
             'Authorization': f'Bearer {self._get_storage_token()}'
         }
 
-        return sess.get(url, headers=headers, stream=stream)
+        return sess.get(url, headers=headers, params=params, stream=stream)
 
     def _get_storage_address(self) -> str:
         return self.beaker_info['storage']['address']
@@ -237,23 +239,36 @@ class DirCacheEntry(CacheEntry):
 
     def download(self, sess: requests.Session) -> None:
 
-        dir_res = self.beaker_item.make_directory_manifest_request(sess)
+        done = False
+        cursor: Optional[str] = None
+        while not done:
 
-        if not dir_res.status_code == 200:
-            raise BeakerstoreError(
-                (f'Unable to get the requested directory manifest. '
-                 f'Response code: {dir_res.status_code}.'))
+            dir_res = self.beaker_item.make_directory_manifest_request(sess, cursor)
 
-        file_names = list(map(lambda f: f['path'], dir_res.json()['files']))
-        items_with_details = list(map(lambda file_name: self.dir_to_file(file_name), file_names))
+            if not dir_res.status_code == 200:
+                raise BeakerstoreError(
+                    (f'Unable to get the requested directory manifest. '
+                     f'Response code: {dir_res.status_code}.'))
 
-        # not totally necessary but it does mean that if you're running two of this at the same
-        # time on the same dataset, they may work on downloading different files (instead of going
-        # through the files in the same order, one downloading the current file, the other
-        # waiting on the lock)
-        shuffle(items_with_details)
-        for item in items_with_details:
-            item.download(sess)
+            json_dir_res = dir_res.json()
+            file_names = list(map(lambda f: f['path'], json_dir_res['files']))
+            items_with_details = list(map(lambda file_name: self.dir_to_file(file_name), file_names))
+
+            # not totally necessary but it does mean that if you're running two of this at the same
+            # time on the same dataset, they may work on downloading different files (instead of going
+            # through the files in the same order, one downloading the current file, the other
+            # waiting on the lock)
+            shuffle(items_with_details)
+            for item in items_with_details:
+                item.download(sess)
+
+            cursor_key = 'cursor'
+            if cursor_key in json_dir_res:
+                cursor = json_dir_res[cursor_key]
+            else:
+                cursor = None
+
+            done = cursor is None
 
     def dir_to_file(self, file_name: str):
         """Makes an instance of FileCacheEntry from this instance of DirCacheEntry.
